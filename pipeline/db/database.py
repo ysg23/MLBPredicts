@@ -86,7 +86,7 @@ def get_status() -> dict:
     conn = get_connection()
     tables = ["stadiums", "park_factors", "games", "batter_stats",
               "pitcher_stats", "weather", "hr_odds", "umpires",
-              "hr_model_scores", "bets"]
+              "hr_model_scores", "batter_game_outcomes", "bets"]
     status = {}
     for table in tables:
         try:

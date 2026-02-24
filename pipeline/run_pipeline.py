@@ -3,6 +3,7 @@ MLB HR Prop Pipeline - Main Runner
 
 Usage:
     python run_pipeline.py --init     # First time: setup DB + load reference data
+    python run_pipeline.py --backfill # Load historical Statcast CSV seasons
     python run_pipeline.py --daily    # Daily: fetch all fresh data
     python run_pipeline.py --status   # Check database status
     python run_pipeline.py --test     # Quick test: just pull today's schedule
@@ -148,6 +149,18 @@ def run_daily(date: str = None):
     print("  python run_pipeline.py --score")
 
 
+def run_backfill_historical():
+    """Load historical seasons from CSV files into SQLite."""
+    print("\n📚 HISTORICAL BACKFILL")
+    print("─" * 40)
+    try:
+        from backfill import run_backfill
+        run_backfill(seasons=[2023, 2024, 2025])
+    except Exception as e:
+        print(f"\n❌ Backfill failed: {e}")
+        raise
+
+
 def run_status():
     """Print database status."""
     print("\n📊 DATABASE STATUS")
@@ -188,6 +201,7 @@ def run_test():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MLB HR Prop Data Pipeline")
     parser.add_argument("--init", action="store_true", help="Initialize database + reference data")
+    parser.add_argument("--backfill", action="store_true", help="Load historical CSV data")
     parser.add_argument("--daily", action="store_true", help="Run daily data pipeline")
     parser.add_argument("--status", action="store_true", help="Show database status")
     parser.add_argument("--test", action="store_true", help="Quick connection test")
@@ -197,6 +211,8 @@ if __name__ == "__main__":
     
     if args.init:
         run_init()
+    elif args.backfill:
+        run_backfill_historical()
     elif args.daily:
         run_daily(args.date)
     elif args.status:

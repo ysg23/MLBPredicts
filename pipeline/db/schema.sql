@@ -267,6 +267,28 @@ CREATE INDEX IF NOT EXISTS idx_model_scores_date ON hr_model_scores(game_date);
 CREATE INDEX IF NOT EXISTS idx_model_scores_signal ON hr_model_scores(signal);
 
 -- ============================================================
+-- HISTORICAL OUTCOMES (for backtesting)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS batter_game_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id INTEGER NOT NULL REFERENCES games(game_id),
+    game_date DATE NOT NULL,
+    player_id INTEGER NOT NULL,
+    player_name TEXT NOT NULL,
+    team TEXT,
+    opponent TEXT,
+    pa INTEGER DEFAULT 0,
+    hr_count INTEGER DEFAULT 0,
+    did_hit_hr INTEGER NOT NULL CHECK(did_hit_hr IN (0, 1)),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(game_id, player_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bgo_date ON batter_game_outcomes(game_date);
+CREATE INDEX IF NOT EXISTS idx_bgo_player ON batter_game_outcomes(player_id, game_date);
+
+-- ============================================================
 -- BET TRACKING (bankroll management)
 -- ============================================================
 

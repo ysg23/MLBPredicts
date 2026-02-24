@@ -2,19 +2,37 @@
 
 Complete step-by-step prompts for Cursor to build, wire, and deploy the full project.
 
+## STACK
+- **Cursor** → builds everything (pipeline code + React dashboard)
+- **Supabase** → shared Postgres database (free tier, 500MB)
+- **Railway** → hosts Python pipeline cron + FastAPI server ($25 plan, already paid)
+- **Vercel** → hosts React dashboard (free tier)
+- **GitHub** → all code
+
 ## HOW TO USE THIS GUIDE IN CURSOR
 
 1. Open this file in Cursor so it has full context
 2. Feed prompts ONE AT A TIME — copy-paste each prompt into Cursor chat
 3. Wait for each to complete and verify before moving to the next
-4. Tell Cursor: "I have a build guide in CURSOR_BUILD_GUIDE.md. Start with Phase 0, then I'll feed you prompts one by one."
-5. If Cursor asks questions, answer them. If it goes off track, say "Stop. Re-read the prompt in CURSOR_BUILD_GUIDE.md for Phase X, Prompt Y."
+4. Tell Cursor: "Read through the full project structure in /pipeline and understand the existing code. Then open CURSOR_BUILD_GUIDE.md — this is our build plan. Start with Phase 0B. Show me the output before moving on. After that, I'll tell you which prompt to run next."
+5. If Cursor goes off track, say "Stop. Re-read the prompt in CURSOR_BUILD_GUIDE.md for Phase X, Prompt Y."
 
 ---
 
 ## PHASE 0: PRE-FLIGHT
 
-### 0A. Repo Structure
+### 0A. Supabase Setup (do this manually first)
+1. Go to https://supabase.com → New Project
+2. Name it "mlb-hr-model", choose a region close to you, set a DB password
+3. Once created, go to **Settings → API** and copy:
+   - Project URL → `SUPABASE_URL`
+   - `anon` public key → `SUPABASE_ANON_KEY`
+   - `service_role` secret key → `SUPABASE_SERVICE_KEY`
+4. Go to **SQL Editor → New Query**
+5. Paste the entire contents of `/pipeline/db/schema.sql` and click **Run**
+6. Verify tables were created: go to **Table Editor** — you should see all tables
+
+### 0B. Repo Structure
 Your GitHub repo should look like this:
 
 ```
@@ -42,117 +60,99 @@ MLBPredicts/
 └── README.md
 ```
 
-### 0B. Install Dependencies
+### 0C. Install Dependencies & Configure
 Open terminal in Cursor:
 ```bash
 cd pipeline
-pip install pybaseball requests pandas numpy python-dotenv
+pip install pybaseball requests pandas numpy python-dotenv supabase fastapi uvicorn[standard]
 cp .env.example .env
 ```
+Edit `.env` and paste your Supabase URL + keys from step 0A.
 
-### 0C. Initialize & Test
+### 0D. Initialize & Test
 ```bash
 python run_pipeline.py --init
 python run_pipeline.py --test
 ```
 
-✅ If --test shows games or says "no games" (offseason), pipeline works.
-❌ If it errors, fix before continuing.
+✅ --init should say "Connected to Supabase" and "All tables exist"
+✅ --test should show games or say "no games" (offseason)
+❌ If it errors, fix before continuing
 
 ---
 
 ## PHASE 1: HISTORICAL DATA BACKFILL + MODEL
 
 We need 3 seasons (2023-2025) of historical data to validate our model weights.
-DO NOT use pybaseball for bulk pulls — it's too slow. Use Baseball Savant CSV downloads instead.
+DO NOT use pybaseball for bulk pulls — it's too slow. Use Baseball Savant CSV downloads.
 
 ### Prompt 1A — Build Historical Data Loader
 
 ```
-Create /pipeline/backfill.py — a module to load historical Statcast data from CSV files.
+Create /pipeline/backfill.py — a module to load historical Statcast data from CSV files into our Supabase database.
 
 Context: Baseball Savant lets you download full-season Statcast data as CSV files.
-The user will manually download these from:
-https://baseballsavant.mlb.com/statcast_search
-(Search → set date range to full season → download CSV)
+The user will download these and place them in /pipeline/data/ as:
+- statcast_2023.csv, statcast_2024.csv, statcast_2025.csv
 
-We need 3 seasons: 2023, 2024, 2025.
+Look at the existing code:
+- config.py for settings and HISTORICAL_SEASONS
+- db/database.py for Supabase helpers (upsert_many, insert_many)
+- fetchers/statcast.py for the stat computation logic (use compute_batter_hr_stats as reference)
+- db/schema.sql for all table schemas including hr_outcomes
 
 The module should:
 
-1. Look for CSV files in /pipeline/data/ directory named:
-   - statcast_2023.csv
-   - statcast_2024.csv
-   - statcast_2025.csv
+1. Load each season CSV into pandas (700k-1M rows each, process one season at a time)
 
-2. Load each CSV into pandas (these are large files, 700k-1M rows each)
+2. For each season, compute per-batter rolling window stats:
+   - For every batter with at least 100 PA that season
+   - Windows: 7, 14, 30 days (same as config.BATTER_WINDOWS)
+   - Stats: barrel_pct, hard_hit_pct, avg_exit_velo, fly_ball_pct, hr_per_fb, pull_pct, avg_launch_angle, sweet_spot_pct, iso_power, slg, k_pct, bb_pct, iso_vs_lhp, iso_vs_rhp
+   - Compute these as rolling windows for every game date in the season (so we can backtest without lookahead bias)
 
-3. For each season, compute per-batter aggregate stats in rolling windows:
-   - For every batter who had at least 100 PA in that season
-   - Calculate their stats at multiple window sizes: 7, 14, 30 days and full season
-   - Stats to compute (same as fetchers/statcast.py):
-     - barrel_pct, hard_hit_pct, avg_exit_velo, max_exit_velo
-     - fly_ball_pct, hr_per_fb, pull_pct
-     - avg_launch_angle, sweet_spot_pct
-     - iso_power, slg, k_pct, bb_pct
-     - Handedness splits: iso_vs_lhp, iso_vs_rhp
-   - These should be computed as rolling windows for every game date in the season
-     (so we can backtest what the model WOULD have said on any given day)
+3. Save batter stats to batter_stats table via upsert_many (batch in chunks of 500 rows to avoid Supabase timeouts)
 
-4. Save all computed stats to the batter_stats table in SQLite
+4. Extract game-level data → games table
 
-5. Also extract game-level data and save to the games table:
-   - game_id (game_pk from Statcast), date, home/away teams
-   - home/away pitcher IDs and names
+5. Compute per-pitcher rolling stats for starting pitchers → pitcher_stats table
 
-6. Also compute per-pitcher aggregate stats for every pitcher who started:
-   - HR/9, HR/FB, fly_ball_pct allowed, hard_hit_pct allowed
-   - barrel_pct_against, avg_exit_velo_against
-   - avg_fastball_velo, whiff_pct, chase_pct
-   - Handedness splits
-   - Save to pitcher_stats table
+6. Track actual HR outcomes per batter per game → hr_outcomes table (did they hit a HR? how many?)
 
-7. Track actual HR outcomes per batter per game (did they hit a HR? how many?)
-   Store in a new table or add to an existing one so we can measure model accuracy.
+7. Estimate historical book odds → hr_odds table with sportsbook='estimated':
+   - Map batter's season HR rate to typical American odds:
+     ~2% ≈ +500, ~3% ≈ +400, ~4% ≈ +320, ~5% ≈ +250, ~6%+ ≈ +200
+   - Adjust by park factor
 
 Main function: run_backfill(seasons=[2023, 2024, 2025])
+Print progress: "Processing 2023... 42% complete"
+Add --backfill flag to run_pipeline.py
 
-This will take a few minutes per season — that's fine, it's a one-time operation.
-Print progress as it runs: "Processing 2023... 42% complete" etc.
-
-Add a --backfill flag to run_pipeline.py that calls this.
-
-IMPORTANT: Process each season one at a time to manage memory.
-Use chunked reading if CSVs are very large: pd.read_csv(path, chunksize=100000)
+IMPORTANT: 
+- Process one season at a time to manage memory
+- Batch Supabase inserts in chunks of 500 rows
+- Use chunked CSV reading if needed: pd.read_csv(path, chunksize=100000)
 ```
 
 ### Prompt 1B — Add Pitcher Stats Fetcher (for daily use)
 
 ```
-I have an MLB HR prop data pipeline in /pipeline. Look at the existing code structure:
-- config.py for settings
-- db/schema.sql for the database schema (see pitcher_stats table)
-- db/database.py for DB helpers
-- fetchers/statcast.py for batter stats (use as reference pattern)
+Create /pipeline/fetchers/pitchers.py for daily pitcher stat fetching.
 
-Create /pipeline/fetchers/pitchers.py that:
+Look at:
+- config.py for PITCHER_WINDOWS (14, 30 days)
+- db/database.py for Supabase helpers
+- fetchers/statcast.py as the reference pattern
+- db/schema.sql for pitcher_stats table schema
 
-1. Uses pybaseball to fetch pitcher stats for rolling windows defined in config.py PITCHER_WINDOWS (14, 30 days)
-2. For each pitcher who is a probable starter today, compute:
-   - HR/9 and HR/FB ratio (how many HRs they give up)
-   - Fly ball % allowed
-   - Hard hit % allowed and barrel % allowed
-   - Average exit velocity allowed
-   - Fastball velocity + velocity trend vs season average
-   - Whiff % (swinging strike rate) and chase rate
-   - xFIP and xERA if available from Statcast
-   - Handedness splits: HR/9 vs LHB and vs RHB, ISO allowed vs each
-3. Follows the same pattern as statcast.py: fetch one Statcast pull for the max window, slice locally for smaller windows
-4. Saves to the pitcher_stats table using upsert_many with conflict on (player_id, stat_date, window_days)
-5. Has a main function fetch_daily_pitcher_stats(pitcher_ids: list[int]) that takes a list of pitcher MLB IDs (from the schedule fetcher)
+Create a module that:
+1. Uses pybaseball.statcast_pitcher() for each probable starter today
+2. Computes: HR/9, HR/FB, fly_ball_pct allowed, hard_hit_pct allowed, barrel_pct_against, avg_exit_velo_against, avg_fastball_velo, fastball_velo_trend, whiff_pct, chase_pct, xFIP, xERA, handedness splits
+3. One pybaseball call per pitcher for 30-day window, slice locally for 14-day
+4. Saves to pitcher_stats via upsert_many
 
-Use pybaseball.statcast_pitcher() for individual pitcher data. Enable caching.
-Keep pybaseball calls minimal — only fetch the 30-day window once per pitcher, then slice.
+Main function: fetch_daily_pitcher_stats(pitcher_ids: list[int])
+Enable pybaseball caching. Keep calls minimal.
 ```
 
 ### Prompt 1C — Wire Pitcher Fetcher Into Daily Pipeline
@@ -162,12 +162,10 @@ In /pipeline/run_pipeline.py, Step 3 currently says "Pitcher module coming soon.
 
 Update it to:
 1. Import fetch_daily_pitcher_stats from fetchers.pitchers
-2. Extract pitcher IDs from the games list (both home_pitcher_id and away_pitcher_id)
-3. Filter out None/TBD pitchers
-4. Call fetch_daily_pitcher_stats with the list of pitcher IDs
-5. Print the count of pitcher stat rows saved
-
-Follow the same error handling pattern as the other steps (try/except with error message).
+2. Extract pitcher IDs from games list (home_pitcher_id + away_pitcher_id)
+3. Filter out None/TBD
+4. Call fetch_daily_pitcher_stats with the pitcher IDs
+5. Print count saved. Same error handling pattern as other steps.
 ```
 
 ### Prompt 1D — Build Model Scoring Engine
@@ -175,386 +173,225 @@ Follow the same error handling pattern as the other steps (try/except with error
 ```
 Create /pipeline/scoring.py — the HR model scoring engine.
 
-This module takes all the data we've collected (batter stats, pitcher stats, weather, odds, park factors) and produces a final score + signal for each potential HR prop bet.
+Look at config.py for HR_FACTOR_WEIGHTS and SIGNAL_THRESHOLDS.
+Look at db/database.py for how to query Supabase.
 
-How it works:
+For each batter in each game today:
+1. Pull their 14-day batter_stats from Supabase
+2. Pull opposing pitcher's 14-day pitcher_stats
+3. Pull game weather data
+4. Pull stadium park factor
+5. Pull best available HR prop odds
 
-1. For each game today, get the lineup (or fall back to likely starters based on recent games)
-2. For each batter in each game:
-   a. Pull their 14-day batter_stats from the DB
-   b. Pull the opposing pitcher's 14-day pitcher_stats
-   c. Pull the game's weather data
-   d. Pull the stadium's park factor
-   e. Pull the best available HR prop odds for this batter
+Score each factor 0-100:
+- barrel_score: percentile rank of 14-day barrel% vs all batters
+- matchup_score: batter ISO vs pitcher handedness + pitcher HR/9
+- park_weather_score: park factor × wind_hr_impact × temp impact
+- pitcher_vuln_score: percentile of pitcher HR/9, barrel% allowed
+- hot_cold_score: 7-day ISO vs 30-day baseline
 
-3. Score each factor 0-100:
-   - barrel_score: percentile rank of batter's 14-day barrel% vs all batters in DB
-   - matchup_score: based on batter's ISO vs the pitcher's handedness. High ISO vs that hand = high score. Also factor in pitcher's HR/9 and HR/FB
-   - park_weather_score: combine stadium hr_park_factor × weather wind_hr_impact. Coors + wind out = 100, Oracle Park + wind in = 10
-   - pitcher_vuln_score: percentile rank of pitcher's HR/9, barrel% allowed, hard hit% allowed (higher = more vulnerable = higher score for the batter)
-   - hot_cold_score: compare batter's 7-day ISO to their 30-day baseline. Hot streak = boost, cold streak = penalty
+Weighted composite via HR_FACTOR_WEIGHTS. Compare model prob to book implied prob for edge.
 
-4. Weighted composite using HR_FACTOR_WEIGHTS from config.py
+Signals:
+- BET: score >= 75 AND edge >= 5%
+- LEAN: score >= 60 AND edge >= 3%
+- FADE: score <= 35 AND edge <= -3%
+- SKIP: everything else
 
-5. Compare model probability to book implied probability to get edge %
-
-6. Assign signal based on SIGNAL_THRESHOLDS from config.py:
-   - BET: score >= 75 AND edge >= 5%
-   - LEAN: score >= 60 AND edge >= 3%
-   - FADE: score <= 35 AND edge <= -3%
-   - SKIP: everything else
-
-7. Save all scores to hr_model_scores table
-
-Main function: score_todays_props(game_date: str) -> list[dict]
-
-Also add a --score flag to run_pipeline.py that calls this after --daily.
-
-Use numpy for percentile calculations. Keep it simple — no ML yet, just weighted factors.
+Save to hr_model_scores table. Add --score flag to run_pipeline.py.
+Use numpy for percentile calcs. No ML — just weighted factors.
 ```
 
 ### Prompt 1E — Build Backtesting Engine
 
 ```
-Create /pipeline/backtest.py — uses the historical data we loaded to test model accuracy.
+Create /pipeline/backtest.py — tests model accuracy on historical data.
 
-This module:
+Uses hr_outcomes table to check if model predictions were correct.
 
-1. Takes a date range (e.g., full 2025 season)
-2. For each game date in that range:
-   - Runs the scoring engine (scoring.py) using ONLY data available BEFORE that date
-     (no lookahead bias — the model can only see rolling stats up to the day before)
-   - Generates BET/LEAN/SKIP/FADE signals for every batter in every game
-   - Checks against actual outcomes: did the batter actually hit a HR that game?
+For a date range (e.g., 2025 full season):
+1. For each game date, run scoring engine using ONLY data before that date (no lookahead)
+2. Generate signals for every batter
+3. Check against hr_outcomes: did they actually hit a HR?
 
-3. Computes accuracy metrics:
-   - Overall hit rate: % of BET signals where the batter actually hit a HR
-   - Hit rate by signal: BET vs LEAN vs SKIP vs FADE
-   - ROI simulation: if you bet 1 unit on every BET signal at average book odds, what's the P&L?
-   - Hit rate by score bucket: 90+ score vs 80-89 vs 70-79 etc.
-   - Hit rate by individual factor: which factor is most predictive?
-   - Calibration: does a 30% model probability actually hit ~30% of the time?
+Compute:
+- Hit rate by signal type (BET vs LEAN vs SKIP vs FADE)
+- ROI simulation: 1 unit on every BET signal at estimated book odds
+- Hit rate by score bucket (90+, 80-89, 70-79, etc.)
+- Factor correlation: which individual factor predicts HRs best
+- Calibration: 30% model prob → does it hit ~30%?
+- Optional grid search over factor weights to find optimal combo
 
-4. Outputs results as:
-   - Print summary to console
-   - Save detailed results to a CSV in /pipeline/data/backtest_results.csv
-   - Show factor correlation analysis (which weights should be adjusted)
+Output: console summary + CSV to /pipeline/data/backtest_results.csv
+Add --backtest flag with --start and --end date args to run_pipeline.py
 
-5. Optionally: run a simple grid search over factor weights to find optimal weights
-   - Try different weight combinations for the 5 factors
-   - Find the combination that maximizes ROI on historical data
-   - Print recommended weights vs current weights
-
-Main function: run_backtest(start_date: str, end_date: str)
-
-Add a --backtest flag to run_pipeline.py with --start and --end date args.
-
-IMPORTANT: This must avoid lookahead bias. On any given date, the model can only use
-stats computed from PRIOR dates. The backfill module should have stored rolling stats
-by date to make this possible.
+CRITICAL: No lookahead bias. Only use stats from prior dates.
+Query Supabase with date filters to enforce this.
 ```
 
 ---
 
 ## PHASE 2: DASHBOARD (React + Vite → Vercel)
 
-The dashboard will be hosted on Vercel (free tier). It's a React app that talks to a
-FastAPI backend running on Railway alongside the pipeline.
-
 ### Prompt 2A — Scaffold React Dashboard
 
 ```
 Create a React dashboard in /dashboard using Vite + React + TypeScript.
 
-Initialize with:
-- Vite + React + TypeScript
-- Tailwind CSS 3
-- React Router for navigation
-- Recharts for charts
+Initialize with: Vite, React, TypeScript, Tailwind CSS 3, React Router, Recharts
 
-The dashboard has 4 main views (tabs/routes):
-1. /picks — Today's Picks (main view, default)
-2. /performance — Model Performance & accuracy tracking
-3. /tools — My model vs PropFinder vs BallparkPal vs HomeRunPredict
+4 routes:
+1. /picks — Today's Picks (default)
+2. /performance — Model accuracy tracking
+3. /tools — My model vs PropFinder/BallparkPal/HomeRunPredict
 4. /bankroll — Bet tracking and P&L
 
-Design direction:
-- Dark theme: bg-gray-950 background, bg-gray-800/border-gray-700 cards
-- Accent color: cyan-400 for highlights, green for BET, yellow for LEAN, red for FADE
-- Fonts: "JetBrains Mono" (Google Fonts) for all numbers/data, "Plus Jakarta Sans" for text
-- Clean, dense, data-forward — think Bloomberg terminal meets sports app
-- Cards should have subtle hover states and transitions
-- No generic AI-looking design — this should look like a tool built by a bettor for a bettor
+Design:
+- Dark theme: bg-gray-950, cards bg-gray-800/border-gray-700
+- Accents: cyan-400 highlights, green BET, yellow LEAN, red FADE
+- Fonts: "JetBrains Mono" for numbers, "Plus Jakarta Sans" for text (Google Fonts)
+- Bloomberg terminal meets sports app aesthetic — dense, data-forward
+- No generic AI design. This should look like a tool built by a bettor.
 
-Navigation: horizontal tab bar at the top, subtle active indicator.
+Scaffold project structure, routing, shared layout with tab nav, placeholder pages.
 
-Scaffold the project structure, routing, shared layout with nav bar, and placeholder pages.
-We'll build each page in the next prompts.
+For Supabase integration: install @supabase/supabase-js
+Create /dashboard/src/lib/supabase.ts:
+  import { createClient } from '@supabase/supabase-js'
+  export const supabase = createClient(
+    import.meta.env.VITE_SUPABASE_URL,
+    import.meta.env.VITE_SUPABASE_ANON_KEY
+  )
+
+The dashboard reads directly from Supabase using the anon key (RLS policies allow public reads).
+Create /dashboard/.env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
 ```
 
 ### Prompt 2B — Build Today's Picks Page
 
 ```
-Build the main "Today's Picks" page at /picks in the React dashboard.
+Build the main "Today's Picks" page at /picks.
 
-Reference this data structure for what the API will return:
-{
-  player_name: "Aaron Judge",
-  team: "NYY",
-  opponent: "BOS",
-  opposing_pitcher: "Brayan Bello",
-  model_score: 87,
-  signal: "BET",
-  model_prob: 0.312,
-  book_implied_prob: 0.238,
-  edge: 0.074,
-  barrel_score: 92,
-  matchup_score: 78,
-  park_weather_score: 85,
-  pitcher_vuln_score: 71,
-  hot_cold_score: 65,
-  propfinder_signal: "BET",
-  ballparkpal_signal: "LEAN",
-  hrpredict_signal: "BET",
-  consensus_agreement: 3,
-  temperature_f: 78,
-  wind_speed_mph: 12,
-  wind_description: "out to CF (12mph)",
-  wind_hr_impact: 1.15,
-  best_odds: "+320",
-  best_book: "DraftKings"
-}
+Data comes from Supabase: query hr_model_scores joined with weather, filtered by today's date.
 
 Page layout:
-1. Top summary bar: total props scanned, BET signals count, LEAN count, avg edge on BETs, best pick of the day
-2. Filter/sort bar: filter by signal (ALL/BET/LEAN/SKIP/FADE), sort by score or edge
-3. Pick cards showing:
-   - Player name, team vs opponent, opposing pitcher
-   - Model score as circular progress ring (0-100)
-   - Signal badge (color coded)
-   - Edge % prominently displayed
-   - Best available odds and which book
-   - Book implied % vs model probability side by side
-4. Expandable detail panel on each card:
-   - 5 factor scores as horizontal progress bars (barrel, matchup, park/weather, pitcher vuln, hot/cold)
-   - Weather info (temp, wind description, HR impact multiplier)
-   - External tool consensus: PropFinder/BallparkPal/HomeRunPredict signals with colored badges
-   - Consensus agreement indicator (e.g., "3/3 agree" badge)
-   - Dropdown selects to manually input external tool signals (BET/LEAN/SKIP/FADE/not listed) with save button
-   - "Log Bet" button (for BET and LEAN signals only)
+1. Summary bar: props scanned, BET count, LEAN count, avg edge on BETs
+2. Filter/sort: by signal (ALL/BET/LEAN/SKIP/FADE), sort by score or edge
+3. Pick cards:
+   - Player, team vs opponent, opposing pitcher
+   - Model score as circular progress ring
+   - Signal badge (BET=#22c55e, LEAN=#eab308, SKIP=#6b7280, FADE=#ef4444)
+   - Edge %, best odds + which book, model prob vs book implied
+4. Expandable detail:
+   - 5 factor bars (barrel, matchup, park/weather, pitcher vuln, hot/cold)
+   - Weather (temp, wind, HR impact multiplier)
+   - Tool consensus: PropFinder/BallparkPal/HomeRunPredict signal badges
+   - Dropdown selects to manually set tool signals → updates hr_model_scores in Supabase
+   - "Log Bet" button (BET/LEAN only) → inserts into bets table
 
-Signal colors: BET=#22c55e, LEAN=#eab308, SKIP=#6b7280, FADE=#ef4444.
-Use JetBrains Mono for all numbers.
-
-Start with hardcoded mock data (8 picks across all signal types). We connect the API later.
+Use Supabase client for all reads and writes.
+JetBrains Mono for numbers. Start with mock data, then wire to Supabase.
 ```
 
 ### Prompt 2C — Build Performance, Bankroll & Tool Comparison Pages
 
 ```
-Build three more pages for the /dashboard:
+Build three more pages:
 
-PAGE 1: Model Performance (/performance)
-- Overall record card: W-L-P with win %, ROI %
-- Win rate over time — line chart with rolling 7-day win rate (Recharts)
-- Signal breakdown table: win rate for BET picks vs LEAN picks vs FADE picks
-- Factor analysis: bar chart showing which factor score correlates most with actual HR outcomes
-- Calibration chart: model probability buckets (10-20%, 20-30%, etc.) vs actual hit rate
-- Calendar heatmap showing daily P&L (green for profit days, red for loss days)
-- Date range selector to filter all charts
+/performance:
+- W-L record, win %, ROI %
+- Rolling 7-day win rate line chart (Recharts)
+- Signal breakdown: win rate per signal type
+- Factor analysis: which factor correlates with HR outcomes
+- Calibration: model probability buckets vs actual hit rate
+- Calendar heatmap: daily P&L
+- Data from: hr_model_scores + hr_outcomes + bets tables in Supabase
 
-PAGE 2: Tool Comparison (/tools)
-- Side-by-side accuracy table: My Model vs PropFinder vs BallparkPal vs HomeRunPredict
-- Columns: total picks tracked, BET signal win %, overall win %, ROI %
-- Line chart: cumulative ROI over time for each tool (Recharts)
-- Agreement analysis: win rate when 2/3 tools agree, when 3/3 agree, when tools disagree
-- "My model is N% better/worse than [tool]" summary callout
+/tools:
+- Accuracy table: My Model vs PropFinder vs BallparkPal vs HomeRunPredict
+- Cumulative ROI line chart per tool
+- Agreement analysis: win rate when 2/3 agree, 3/3 agree
+- Data from: hr_model_scores + hr_outcomes
 
-PAGE 3: Bankroll Tracker (/bankroll)
-- Starting bankroll input at top
-- Running balance line chart (Recharts)
-- Daily P&L bar chart
-- Key stats: total wagered, total profit, ROI %, max drawdown, longest win/loss streak
-- Bet log table: date, player, odds, sportsbook, stake, units, result, profit — sortable
-- Pending bets section with Win/Loss/Push settle buttons
-- Unit size calculator: enter bankroll → recommended unit via Kelly criterion
+/bankroll:
+- Starting bankroll input
+- Running balance + daily P&L charts (Recharts)
+- Stats: total wagered, profit, ROI, max drawdown, streaks
+- Bet log table (sortable): date, player, odds, book, stake, result, profit
+- Pending bets with Win/Loss/Push settle buttons → updates bets table in Supabase
+- Kelly criterion unit calculator
+- Data from: bets table
 
-All pages use mock data for now. Same dark theme, JetBrains Mono for numbers.
-Use Recharts for all charts.
+All read/write via Supabase client. Same dark theme. Mock data first, then wire.
 ```
 
-### Prompt 2D — Build FastAPI Backend + Connect Dashboard
+### Prompt 2D — Build FastAPI Backend for Pipeline
 
 ```
-Create a FastAPI backend that serves data from the SQLite database to the React dashboard.
+Create /pipeline/api.py — a lightweight FastAPI server for the pipeline.
 
-Create /pipeline/api.py:
+This serves two purposes:
+1. Health check endpoint for Railway monitoring
+2. Pipeline trigger endpoint (optional, for manual runs)
 
 Endpoints:
-  GET /api/picks?date=YYYY-MM-DD
-    → Returns scored picks from hr_model_scores joined with weather and hr_odds
-    → Default: today's date
+  GET /api/status → DB row counts, last pipeline run time
+  POST /api/trigger → manually trigger a pipeline run (protected with a simple API key)
 
-  GET /api/performance?start=YYYY-MM-DD&end=YYYY-MM-DD
-    → Returns win/loss stats, rolling win rate, factor correlations from bets + hr_model_scores
+Note: The dashboard reads/writes directly to Supabase, so we do NOT need API endpoints
+for picks, bets, performance etc. The FastAPI server is mainly for Railway to have
+a running process + health check.
 
-  GET /api/bankroll
-    → Returns running bankroll, daily P&L, bet log from bets table
-
-  GET /api/tools
-    → Returns tool accuracy comparison from hr_model_scores where external signals are logged
-
-  POST /api/picks/{id}/tools
-    → Body: { propfinder: "BET", ballparkpal: "LEAN", hrpredict: "SKIP" }
-    → Updates external tool signals on hr_model_scores row
-    → Recalculates consensus_agreement
-
-  POST /api/bets
-    → Body: { game_id, player_id, player_name, sportsbook, odds, stake, units, model_score, model_edge }
-    → Inserts into bets table with result='pending'
-
-  PUT /api/bets/{id}/settle
-    → Body: { result: "win" | "loss" | "push" }
-    → Updates result, calculates payout and profit
-
-  GET /api/status
-    → Returns pipeline health: last run time, DB row counts, last successful fetch per source
-
-Requirements:
-- Add CORS middleware allowing the Vercel frontend domain + localhost:5173
-- Use the same SQLite DB path from config.py
-- Add uvicorn and fastapi to requirements.txt
-- API runs with: uvicorn pipeline.api:app --host 0.0.0.0 --port $PORT
-
-Then update the React dashboard:
-1. Create /dashboard/src/api/client.ts with typed fetch functions for every endpoint
-2. Use VITE_API_URL env var: const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-3. Create /dashboard/.env with VITE_API_URL=http://localhost:8000
-4. Replace all mock data with real API calls using useEffect + useState
-5. Add loading skeletons and error states to all pages
-6. Manual tool signal dropdowns POST to /api/picks/{id}/tools
-7. Bet logger POSTs to /api/bets
-8. Settle buttons PUT to /api/bets/{id}/settle
+Add CORS middleware. Run with: uvicorn api:app --host 0.0.0.0 --port $PORT
 ```
 
 ---
 
 ## PHASE 3: DEPLOYMENT
 
-### Prompt 3A — Railway Config (Pipeline + API Backend)
+### Prompt 3A — Railway Config (Pipeline + API)
 
 ```
-Create deployment configs for Railway in the /pipeline directory.
-
-Railway hosts both:
-- The FastAPI server (runs continuously, serves the dashboard)
-- The daily pipeline cron job (runs at 10 AM ET / 15:00 UTC)
-
-Create these files:
+Create deployment configs for Railway:
 
 1. /pipeline/requirements.txt:
-   pybaseball
-   requests
-   pandas
-   numpy
-   python-dotenv
-   fastapi
-   uvicorn[standard]
+   pybaseball, requests, pandas, numpy, python-dotenv, supabase, fastapi, uvicorn[standard]
 
 2. /pipeline/Dockerfile:
-   - Python 3.11 slim base
-   - Install requirements
-   - Copy all pipeline code
-   - Expose PORT env var
-   - CMD: uvicorn api:app --host 0.0.0.0 --port $PORT
+   Python 3.11 slim, install requirements, copy code, CMD uvicorn
 
 3. /pipeline/railway.toml:
    [build]
    builder = "DOCKERFILE"
-   dockerfilePath = "./Dockerfile"
-
    [deploy]
    startCommand = "uvicorn api:app --host 0.0.0.0 --port ${PORT}"
-   restartPolicyType = "ON_FAILURE"
 
-4. Update /pipeline/.env.example with all env vars:
-   ODDS_API_KEY=
-   WEATHER_API_KEY=
-   DISCORD_WEBHOOK_URL=
-   PORT=8000
+4. Document cron setup:
+   - Second Railway service, same project
+   - Command: python run_pipeline.py --daily --score
+   - Cron: 0 15 * * * (10 AM ET)
+   - Shares same Supabase connection
 
-5. Document in a comment how to set up the cron:
-   - In Railway dashboard, create a second service in the same project
-   - Start command: python run_pipeline.py --daily --score
-   - Schedule: 0 15 * * * (10 AM ET = 15:00 UTC during EDT)
-   - This service runs the pipeline + scoring, writes to DB, then exits
-   - The API service reads from the same DB continuously
+Environment vars needed on Railway:
+SUPABASE_URL, SUPABASE_SERVICE_KEY, ODDS_API_KEY, WEATHER_API_KEY, DISCORD_WEBHOOK_URL
 ```
 
-### Prompt 3B — Vercel Config (Dashboard Frontend)
+### Prompt 3B — Vercel Config (Dashboard)
 
 ```
-Create deployment configs for Vercel in the /dashboard directory.
-
-Vercel hosts the React dashboard (free tier — unlimited deploys, fast CDN).
-
-Create:
+Create Vercel deployment configs:
 
 1. /dashboard/vercel.json:
-   {
-     "buildCommand": "npm run build",
-     "outputDirectory": "dist",
-     "framework": "vite",
-     "rewrites": [
-       { "source": "/(.*)", "destination": "/index.html" }
-     ]
-   }
-
-   Rewrites needed for React Router client-side routing.
+   buildCommand: npm run build, outputDirectory: dist, framework: vite
+   rewrites: [{ source: "/(.*)", destination: "/index.html" }]
 
 2. /dashboard/.env.example:
-   VITE_API_URL=http://localhost:8000
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-key
 
-3. Make sure /dashboard/.gitignore includes:
-   node_modules/
-   dist/
-   .vercel/
-   .env
-   .env.local
+3. /dashboard/.gitignore: node_modules/, dist/, .vercel/, .env
 
-4. /dashboard/src/api/client.ts uses:
-   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
-5. Update root /README.md with full setup instructions:
-
-   ## Local Development
-
-   ### Backend (Pipeline + API)
-   cd pipeline
-   pip install -r requirements.txt
-   cp .env.example .env
-   python run_pipeline.py --init
-   python run_pipeline.py --daily
-   python run_pipeline.py --score
-   uvicorn api:app --reload
-
-   ### Frontend (Dashboard)
-   cd dashboard
-   npm install
-   npm run dev
-
-   ## Deployment
-
-   ### Railway (Backend)
-   1. Create project, connect GitHub repo, root dir: /pipeline
-   2. Add env vars: ODDS_API_KEY, WEATHER_API_KEY, DISCORD_WEBHOOK_URL
-   3. Deploy (auto-detects Dockerfile)
-   4. Create cron service: python run_pipeline.py --daily --score @ 0 15 * * *
-
-   ### Vercel (Frontend)
-   1. Import repo, root dir: /dashboard, framework: Vite
-   2. Add env var: VITE_API_URL = https://your-railway-app.up.railway.app
-   3. Deploy
+4. Update root README.md with full local dev + deployment instructions
 ```
 
 ---
@@ -564,131 +401,88 @@ Create:
 ### Prompt 4A — Discord Morning Alerts
 
 ```
-Create /pipeline/alerts.py — Discord webhook for morning pick alerts.
+Create /pipeline/alerts.py — Discord webhook for morning alerts.
 
-After scoring completes, send a Discord embed:
+After --daily --score completes, send embed:
 - Title: "⚾ MLB HR Picks — [date]"
-- Color: green if 3+ BET signals, yellow if 1-2, gray if 0
-- Fields:
-  - BET signals count
-  - Top 3 picks: "Player (TEAM) vs Pitcher — Score: 87, Edge: +7.4%"
-  - Weather flags: games with wind_hr_impact > 1.10 or < 0.90
-  - Tool consensus: picks with 3/3 agreement
-- Footer: link to dashboard
+- BET count, top 3 picks with score + edge
+- Weather flags (wind_hr_impact > 1.10 or < 0.90)
+- Tool consensus count
+- Dashboard link
 
-Uses DISCORD_WEBHOOK_URL from env. Gracefully skips if not configured.
-Wire into run_pipeline.py after --score completes.
-```
-
-### Prompt 4B — Historical Odds Estimation (for backtesting)
-
-```
-For backtesting ROI, we need historical odds. The Odds API free tier doesn't have historical data.
-
-In /pipeline/backfill.py, add estimate_historical_odds():
-
-1. For each batter-game in historical data, estimate what book odds WOULD have been
-2. Use a lookup: map season HR rate to typical American odds
-   - ~2% HR rate ≈ +500
-   - ~3% HR rate ≈ +400
-   - ~4% HR rate ≈ +320
-   - ~5% HR rate ≈ +250
-   - ~6%+ HR rate ≈ +200
-3. Adjust by park factor (Coors batters get shorter odds)
-4. Save to hr_odds table with sportsbook='estimated'
-
-This is an approximation but good enough for backtesting ROI calculations.
-Run automatically during --backfill.
+Uses DISCORD_WEBHOOK_URL. Skips gracefully if not set.
+Wire into run_pipeline.py after scoring.
 ```
 
 ---
 
-## HISTORICAL DATA DOWNLOAD INSTRUCTIONS
+## HISTORICAL DATA DOWNLOAD
 
-Before running Phase 1 backfill, download these CSV files:
+Before Phase 1 backfill, download 3 seasons of Statcast CSVs:
 
-### Baseball Savant Statcast Data (3 seasons)
-1. Go to: https://baseballsavant.mlb.com/statcast_search
-2. Set: Season 2023, Player Type: Batter, Min Results: 0
-3. Search → Download CSV
-4. Repeat for 2024, 2025
-5. Save as:
-   - /pipeline/data/statcast_2023.csv
-   - /pipeline/data/statcast_2024.csv
-   - /pipeline/data/statcast_2025.csv
+### Option A: Baseball Savant Web (may limit to 40k rows per download)
+1. https://baseballsavant.mlb.com/statcast_search
+2. Season: 2023, Player Type: Batter → Search → Download CSV
+3. Repeat for 2024, 2025 (may need monthly chunks)
+4. Save to: /pipeline/data/statcast_YYYY.csv
 
-NOTE: Each file is ~100-200MB. Baseball Savant may limit to 40k rows per download.
-If so, download in monthly chunks and combine, or use this Python script:
-
+### Option B: pybaseball Script (slower but no row limits)
 ```python
 from pybaseball import statcast
 for year in [2023, 2024, 2025]:
-    print(f"Downloading {year}...")
     df = statcast(start_dt=f"{year}-03-30", end_dt=f"{year}-11-05")
     df.to_csv(f"pipeline/data/statcast_{year}.csv", index=False)
-    print(f"  Saved {len(df)} rows")
 ```
-This takes 10-20 min per season. Run overnight if needed.
+Takes 10-20 min per season. Run overnight.
+
+---
+
+## SUPABASE SETUP CHECKLIST
+
+1. [ ] Create project at supabase.com
+2. [ ] Run schema.sql in SQL Editor (creates all tables + views + RLS policies)
+3. [ ] Copy URL + anon key + service key
+4. [ ] Add to /pipeline/.env (service key for writes)
+5. [ ] Add to /dashboard/.env (anon key for reads)
+6. [ ] Verify: python run_pipeline.py --init shows "All tables exist"
 
 ---
 
 ## TESTING CHECKLIST
 
 ### Before Opening Day (March 27, 2026):
-
-Pipeline:
-- [ ] python run_pipeline.py --init creates DB
+- [ ] Supabase tables created and connected
 - [ ] Historical CSVs downloaded to /pipeline/data/
 - [ ] python run_pipeline.py --backfill loads 3 seasons
 - [ ] python run_pipeline.py --backtest --start 2025-03-27 --end 2025-09-28
-- [ ] Backtest shows BET signal hit rate above book implied probability
-- [ ] Factor weights adjusted based on backtest results
-- [ ] python run_pipeline.py --daily fetches spring training data
-- [ ] python run_pipeline.py --score generates picks
-- [ ] API starts, /api/picks returns data
+- [ ] Factor weights tuned from backtest
+- [ ] python run_pipeline.py --daily + --score works
+- [ ] Dashboard loads, reads from Supabase
+- [ ] Manual tool input + bet logger works
+- [ ] Railway + Vercel deployed
+- [ ] Discord alerts fire
 
-Dashboard:
-- [ ] Loads on localhost:5173
-- [ ] Picks page shows scored props
-- [ ] Performance page shows backtest results
-- [ ] Manual tool input saves
-- [ ] Bet logger works
-- [ ] Bankroll tracker shows P&L
-
-Deployment:
-- [ ] Railway deploys API + cron
-- [ ] Vercel deploys dashboard
-- [ ] Dashboard reaches API across domains
-- [ ] Discord alerts fire after cron
-- [ ] Cron runs at 10 AM ET daily
-
-### First 2 Weeks (March 27 - April 10):
-- [ ] Paper trade only — log picks, don't bet real money
-- [ ] Compare model vs PropFinder/BallparkPal/HomeRunPredict
-- [ ] Track which factors need weight adjustment
-- [ ] Adjust signal thresholds if too many/few BET signals
+### Paper Trade (March 27 - April 10):
+- [ ] Log picks daily, don't bet real money
+- [ ] Compare model vs paid tools
+- [ ] Adjust thresholds and weights
 
 ### Go Live (April 10+):
-- [ ] Start small (0.5x normal units)
-- [ ] Scale after 2 profitable weeks
-- [ ] Review weekly, adjust weights monthly
+- [ ] Start at 0.5x units, scale after 2 profitable weeks
 
 ---
 
-## TECH STACK SUMMARY
+## TECH STACK
 
 | Component | Technology | Host | Cost |
 |-----------|-----------|------|------|
-| Data Pipeline | Python + pybaseball | Railway (cron) | $0 (within plan) |
-| API Server | FastAPI + uvicorn | Railway (service) | $0 (within plan) |
-| Database | SQLite | Railway (persistent) | $0 |
+| Pipeline | Python + pybaseball | Railway (cron) | $0 (within $25 plan) |
+| API Health | FastAPI + uvicorn | Railway (service) | $0 (same plan) |
+| Database | Postgres | Supabase (free, 500MB) | $0 |
 | Dashboard | React + Vite + Tailwind | Vercel (free tier) | $0 |
-| Statcast Data | pybaseball / CSV | Free | $0 |
-| Game Schedule | MLB Stats API | Free, no key | $0 |
-| Odds | The Odds API | Free tier (500/mo) | $0 |
-| Weather | OpenWeatherMap | Free tier (1000/day) | $0 |
+| Statcast | pybaseball / CSV | Free | $0 |
+| Schedule | MLB Stats API | Free, no key | $0 |
+| Odds | The Odds API | Free (500/mo) | $0 |
+| Weather | OpenWeatherMap | Free (1000/day) | $0 |
 | Alerts | Discord Webhook | Free | $0 |
-| Code | GitHub | Free | $0 |
-| **Total** | | | **$0/month** |
-
-(Railway $20-25/mo already paid for newsletter — this rides on the same plan)
+| **Total** | | | **$0 additional** |

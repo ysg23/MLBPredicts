@@ -1,28 +1,19 @@
-
 """
-Market-agnostic scoring engine.
-
-Each market module implements:
-- MARKET (str)
-- BET_TYPE_DEFAULT (str)
-- compute_projection_and_factors(game_ctx) -> dict with:
-    - model_prob (float|None)
-    - model_projection (float|None)
-    - factors (dict[str, float])  # each 0-100
-    - line (float|None)
-    - bet_type (str)
+Market-agnostic scoring helpers and execution engine.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import numpy as np
 
-from db.database import query, upsert_many
+from db.database import get_connection, insert_many, query
+from scoring.market_specs import get_market_spec
 
 
 @dataclass
@@ -36,37 +27,166 @@ class GameContext:
     away_pitcher_id: Optional[int]
     away_pitcher_name: Optional[str]
     stadium_id: Optional[int]
+    game_time: Optional[str] = None
 
 
-def percentile_rank(values: list[float], x: float) -> float:
+def clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
+    return float(max(lo, min(hi, value)))
+
+
+def percentile_score(values: list[float], value: float | None) -> float:
     """Return percentile rank (0-100)."""
-    if not values:
+    if value is None or not values:
         return 50.0
     arr = np.array([v for v in values if v is not None], dtype=float)
     if arr.size == 0:
         return 50.0
-    return float((arr < x).mean() * 100.0)
+    return float((arr < float(value)).mean() * 100.0)
 
 
-def implied_prob_from_american(american: int) -> float:
-    """Convert American odds to implied probability."""
+def percentile_rank(values: list[float], x: float) -> float:
+    """Backwards-compatible alias."""
+    return percentile_score(values, x)
+
+
+def zscore_to_0_100(zscore: float, z_cap: float = 3.0) -> float:
+    if zscore is None:
+        return 50.0
+    z = clamp(float(zscore), -abs(z_cap), abs(z_cap))
+    normalized = (z + abs(z_cap)) / (2 * abs(z_cap))
+    return clamp(normalized * 100.0)
+
+
+def implied_prob_from_american(american: int | float | None) -> float | None:
     if american is None:
         return None
-    if american > 0:
-        return 100.0 / (american + 100.0)
-    return (-american) / ((-american) + 100.0)
+    value = float(american)
+    if value == 0:
+        return None
+    if value > 0:
+        return 100.0 / (value + 100.0)
+    return abs(value) / (abs(value) + 100.0)
 
 
-def american_to_decimal(american: int) -> float:
+def american_to_decimal(american: int | float | None) -> float | None:
     if american is None:
         return None
-    if american > 0:
-        return 1.0 + (american / 100.0)
-    return 1.0 + (100.0 / (-american))
+    value = float(american)
+    if value == 0:
+        return None
+    if value > 0:
+        return 1.0 + (value / 100.0)
+    return 1.0 + (100.0 / abs(value))
+
+
+def probability_edge_pct(model_prob: float | None, implied_prob: float | None) -> float | None:
+    if model_prob is None or implied_prob is None:
+        return None
+    return (float(model_prob) - float(implied_prob)) * 100.0
+
+
+def projection_edge_pct(model_projection: float | None, line: float | None) -> float | None:
+    if model_projection is None or line is None:
+        return None
+    line_value = float(line)
+    if line_value == 0:
+        return (float(model_projection) - line_value) * 100.0
+    return ((float(model_projection) - line_value) / abs(line_value)) * 100.0
+
+
+def build_reasons(factors: dict[str, float] | None, top_n: int = 3) -> list[str]:
+    if not factors:
+        return []
+    sorted_items = sorted(factors.items(), key=lambda item: item[1], reverse=True)
+    reasons: list[str] = []
+    for key, score in sorted_items[:top_n]:
+        label = key.replace("_", " ")
+        reasons.append(f"{label}: {score:.1f}")
+    return reasons
+
+
+def build_risk_flags(
+    *,
+    missing_inputs: list[str] | None = None,
+    stale_inputs: list[str] | None = None,
+    lineup_pending: bool = False,
+    weather_pending: bool = False,
+) -> list[str]:
+    flags: list[str] = []
+    for item in missing_inputs or []:
+        flags.append(f"missing:{item}")
+    for item in stale_inputs or []:
+        flags.append(f"stale:{item}")
+    if lineup_pending:
+        flags.append("lineup_pending")
+    if weather_pending:
+        flags.append("weather_pending")
+    return flags
+
+
+def choose_best_odds_row(
+    rows: list[dict[str, Any]],
+    preferred_sportsbook: str | None = None,
+) -> dict[str, Any] | None:
+    if not rows:
+        return None
+
+    # Prefer current run's latest odds timestamp.
+    latest_ts = max(str(r.get("fetched_at") or "") for r in rows)
+    latest_rows = [r for r in rows if str(r.get("fetched_at") or "") == latest_ts] or rows
+
+    preferred_row = None
+    if preferred_sportsbook:
+        preferred = [r for r in latest_rows if (r.get("sportsbook") or "").lower() == preferred_sportsbook.lower()]
+        if preferred:
+            preferred_row = max(preferred, key=lambda r: float(r.get("price_decimal") or r.get("odds_decimal") or 0.0))
+
+    if preferred_row:
+        return preferred_row
+
+    return max(latest_rows, key=lambda r: float(r.get("price_decimal") or r.get("odds_decimal") or 0.0))
+
+
+def get_market_odds_rows(
+    *,
+    game_date: str,
+    market: str,
+    game_id: int | None = None,
+    player_id: int | None = None,
+    team_id: str | None = None,
+    side: str | None = None,
+) -> list[dict[str, Any]]:
+    filters = ["game_date = ?", "market = ?"]
+    params: list[Any] = [game_date, market]
+    if game_id is not None:
+        filters.append("game_id = ?")
+        params.append(game_id)
+    if player_id is not None:
+        filters.append("player_id = ?")
+        params.append(player_id)
+    if team_id is not None:
+        filters.append("team_id = ?")
+        params.append(team_id)
+    if side is not None:
+        filters.append("side = ?")
+        params.append(side)
+
+    where_sql = " AND ".join(filters)
+    return query(
+        f"""
+        SELECT *
+        FROM market_odds
+        WHERE {where_sql}
+        ORDER BY fetched_at DESC
+        """,
+        tuple(params),
+    )
 
 
 def get_best_hr_odds(game_id: int, player_id: int) -> dict[str, Any] | None:
-    """Return best available HR 'over' odds for the player (highest decimal)."""
+    """
+    Backward-compatible HR lookup from legacy hr_odds.
+    """
     rows = query(
         """
         SELECT sportsbook, over_price, implied_prob_over, fetch_time
@@ -79,33 +199,110 @@ def get_best_hr_odds(game_id: int, player_id: int) -> dict[str, Any] | None:
     if not rows:
         return None
     best = None
-    for r in rows:
-        dec = american_to_decimal(int(r["over_price"]))
+    for row in rows:
+        dec = american_to_decimal(row.get("over_price"))
         if dec is None:
             continue
         if best is None or dec > best["odds_decimal"]:
             best = {
-                "sportsbook": r["sportsbook"],
-                "over_price": int(r["over_price"]),
+                "sportsbook": row["sportsbook"],
+                "over_price": int(row["over_price"]),
                 "odds_decimal": dec,
-                "implied_prob": float(r["implied_prob_over"]) if r["implied_prob_over"] is not None else implied_prob_from_american(int(r["over_price"])),
-                "fetch_time": r["fetch_time"],
+                "implied_prob": (
+                    float(row["implied_prob_over"])
+                    if row.get("implied_prob_over") is not None
+                    else implied_prob_from_american(row.get("over_price"))
+                ),
+                "fetch_time": row["fetch_time"],
             }
     return best
 
 
-def save_model_scores(rows: list[dict]) -> int:
-    return upsert_many(
-        "model_scores",
-        rows,
-        conflict_cols=["market", "game_id", "player_id", "team_abbr", "bet_type", "line"],
+def _lineup_weather_flags(game_date: str, game_id: int) -> tuple[int | None, int | None]:
+    rows = query(
+        """
+        SELECT lineups_confirmed_home, lineups_confirmed_away, is_final_context
+        FROM game_context_features
+        WHERE game_date = ? AND game_id = ?
+        LIMIT 1
+        """,
+        (game_date, game_id),
     )
+    if not rows:
+        return None, None
+    lineup_confirmed = 1 if (rows[0].get("lineups_confirmed_home") and rows[0].get("lineups_confirmed_away")) else 0
+    weather_final = 1 if rows[0].get("is_final_context") else 0
+    return lineup_confirmed, weather_final
+
+
+def _confidence_band(model_score: float, risk_flags: list[str]) -> str:
+    score = float(model_score)
+    if score >= 78:
+        band = "HIGH"
+    elif score >= 60:
+        band = "MEDIUM"
+    else:
+        band = "LOW"
+    if len(risk_flags) >= 2 and band == "HIGH":
+        return "MEDIUM"
+    if len(risk_flags) >= 3 and band == "MEDIUM":
+        return "LOW"
+    return band
+
+
+def assign_signal(market: str, model_score: float, edge_pct: float | None) -> str:
+    spec = get_market_spec(market)
+    thresholds = spec.thresholds
+    edge = edge_pct if edge_pct is not None else 0.0
+    score = float(model_score)
+    if score >= thresholds["BET"]["min_score"] and edge >= thresholds["BET"]["min_edge_pct"]:
+        return "BET"
+    if score >= thresholds["LEAN"]["min_score"] and edge >= thresholds["LEAN"]["min_edge_pct"]:
+        return "LEAN"
+    if score <= thresholds["FADE"]["max_score"] and edge <= thresholds["FADE"]["max_edge_pct"]:
+        return "FADE"
+    return "SKIP"
+
+
+def mark_previous_scores_inactive(game_date: str, market: str, game_id: int | None = None) -> int:
+    conn = get_connection()
+    try:
+        if game_id is None:
+            cursor = conn.execute(
+                """
+                UPDATE model_scores
+                SET is_active = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE game_date = ? AND market = ? AND COALESCE(is_active, 1) = 1
+                """,
+                (game_date, market),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE model_scores
+                SET is_active = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE game_date = ? AND market = ? AND game_id = ? AND COALESCE(is_active, 1) = 1
+                """,
+                (game_date, market, game_id),
+            )
+        conn.commit()
+        return int(cursor.rowcount or 0)
+    finally:
+        conn.close()
+
+
+def save_model_scores(rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
+    return int(insert_many("model_scores", rows))
 
 
 def load_today_games(game_date: str) -> list[GameContext]:
     games = query(
         """
-        SELECT game_id, game_date, home_team, away_team, home_pitcher_id, home_pitcher_name,
+        SELECT game_id, game_date, game_time, home_team, away_team, home_pitcher_id, home_pitcher_name,
                away_pitcher_id, away_pitcher_name, stadium_id
         FROM games
         WHERE game_date=?
@@ -114,8 +311,9 @@ def load_today_games(game_date: str) -> list[GameContext]:
     )
     return [
         GameContext(
-            game_id=g["game_id"],
-            game_date=g["game_date"],
+            game_id=int(g["game_id"]),
+            game_date=str(g["game_date"]),
+            game_time=g.get("game_time"),
             home_team=g["home_team"],
             away_team=g["away_team"],
             home_pitcher_id=g.get("home_pitcher_id"),
@@ -136,20 +334,71 @@ def get_weather(game_id: int) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def get_park_factor(stadium_id: int, season: int) -> float:
+def get_park_factor(stadium_id: int | None, season: int) -> float:
     if stadium_id is None:
         return 1.0
     rows = query(
         "SELECT hr_factor FROM park_factors WHERE stadium_id=? AND season=?",
         (stadium_id, season),
     )
-    if rows and rows[0]["hr_factor"] is not None:
+    if rows and rows[0].get("hr_factor") is not None:
         return float(rows[0]["hr_factor"])
-    # fallback to stadium default
-    rows2 = query("SELECT hr_park_factor FROM stadiums WHERE stadium_id=?", (stadium_id,))
-    if rows2 and rows2[0]["hr_park_factor"] is not None:
-        return float(rows2[0]["hr_park_factor"])
+    fallback = query("SELECT hr_park_factor FROM stadiums WHERE stadium_id=?", (stadium_id,))
+    if fallback and fallback[0].get("hr_park_factor") is not None:
+        return float(fallback[0]["hr_park_factor"])
     return 1.0
+
+
+def _normalize_row_for_storage(
+    *,
+    row: dict[str, Any],
+    game_date: str,
+    score_run_id: int | None,
+) -> dict[str, Any]:
+    normalized = dict(row)
+    normalized["game_date"] = game_date
+    normalized["score_run_id"] = score_run_id
+    normalized["is_active"] = int(normalized.get("is_active", 1))
+    normalized["model_score"] = float(normalized.get("model_score", 50.0))
+
+    factors = normalized.get("factors_json")
+    reasons = normalized.get("reasons_json")
+    risk_flags = normalized.get("risk_flags_json")
+
+    if isinstance(factors, dict):
+        factors = json.dumps(factors)
+    if isinstance(reasons, list):
+        reasons = json.dumps(reasons)
+    if isinstance(risk_flags, list):
+        risk_flags = json.dumps(risk_flags)
+
+    normalized["factors_json"] = factors if factors is not None else "{}"
+    normalized["reasons_json"] = reasons if reasons is not None else "[]"
+    normalized["risk_flags_json"] = risk_flags if risk_flags is not None else "[]"
+
+    # Apply standardized signal/confidence if not set by module.
+    parsed_risk = json.loads(normalized["risk_flags_json"]) if normalized["risk_flags_json"] else []
+    if not isinstance(parsed_risk, list):
+        parsed_risk = []
+
+    edge_pct = normalized.get("edge")
+    if normalized.get("signal") is None:
+        normalized["signal"] = assign_signal(
+            normalized["market"],
+            float(normalized["model_score"]),
+            float(edge_pct) if edge_pct is not None else None,
+        )
+    if normalized.get("confidence_band") is None:
+        normalized["confidence_band"] = _confidence_band(float(normalized["model_score"]), parsed_risk)
+
+    if normalized.get("lineup_confirmed") is None or normalized.get("weather_final") is None:
+        lineup_confirmed, weather_final = _lineup_weather_flags(game_date, int(normalized["game_id"]))
+        if normalized.get("lineup_confirmed") is None:
+            normalized["lineup_confirmed"] = lineup_confirmed
+        if normalized.get("weather_final") is None:
+            normalized["weather_final"] = weather_final
+
+    return normalized
 
 
 def score_market_for_date(
@@ -157,24 +406,40 @@ def score_market_for_date(
     game_date: str,
     season: int,
     only_game_id: int | None = None,
+    score_run_id: int | None = None,
+    supersede_existing: bool = False,
 ) -> int:
     """
     Run a market module's scoring for all games on a date.
-    market_module must provide compute_projection_and_factors(ctx, side) where side is 'home' or 'away' for player markets.
     """
     games = load_today_games(game_date)
     if only_game_id is not None:
         games = [g for g in games if g.game_id == only_game_id]
+    if not games:
+        return 0
 
-    total_saved = 0
-    for g in games:
-        weather = get_weather(g.game_id)
-        park = get_park_factor(g.stadium_id, season)
+    if supersede_existing:
+        mark_previous_scores_inactive(game_date, market_module.MARKET, game_id=only_game_id)
 
-        # For player markets we need both teams' batters; for team/game markets module decides.
-        results = market_module.score_game(g, weather=weather, park_factor=park, season=season)
-        if not results:
-            continue
-        total_saved += save_model_scores(results)
+    rows_to_save: list[dict[str, Any]] = []
+    for game in games:
+        weather = get_weather(game.game_id)
+        park_factor = get_park_factor(game.stadium_id, season)
+        rows = market_module.score_game(game, weather=weather, park_factor=park_factor, season=season) or []
+        for row in rows:
+            row.setdefault("market", market_module.MARKET)
+            row.setdefault("game_date", game_date)
+            row.setdefault("game_id", game.game_id)
+            row.setdefault("entity_type", get_market_spec(market_module.MARKET).entity_type)
+            row.setdefault("lineup_confirmed", None)
+            row.setdefault("weather_final", None)
+            row.setdefault("factors_json", {})
+            row.setdefault("reasons_json", [])
+            row.setdefault("risk_flags_json", [])
+            row.setdefault("signal", None)
+            row.setdefault("confidence_band", None)
+            rows_to_save.append(
+                _normalize_row_for_storage(row=row, game_date=game_date, score_run_id=score_run_id)
+            )
 
-    return total_saved
+    return save_model_scores(rows_to_save)

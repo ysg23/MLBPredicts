@@ -13,7 +13,7 @@ from typing import Any
 import requests
 
 from config import ODDS_API_BASE, ODDS_API_KEY
-from db.database import insert_many, query
+from db.database import get_connection, insert_many, query
 from utils.odds_normalizer import (
     SUPPORTED_ODDS_API_MARKETS,
     american_to_implied_prob,
@@ -108,6 +108,60 @@ def _dedupe_market_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
+def _mark_best_available_for_fetch(rows: list[dict[str, Any]], fetched_at: str) -> int:
+    if not rows:
+        return 0
+
+    # Group by normalized selection identity and choose best decimal price.
+    grouped_keys: set[tuple[Any, ...]] = set()
+    for row in rows:
+        grouped_keys.add(
+            (
+                row.get("game_date"),
+                row.get("market"),
+                row.get("selection_key"),
+                row.get("side"),
+                row.get("line"),
+            )
+        )
+
+    conn = get_connection()
+    flagged = 0
+    try:
+        for game_date, market, selection_key, side, line in grouped_keys:
+            candidates = conn.execute(
+                """
+                SELECT id, price_decimal, odds_decimal
+                FROM market_odds
+                WHERE game_date = ?
+                  AND market = ?
+                  AND selection_key IS ?
+                  AND side IS ?
+                  AND line IS ?
+                  AND fetched_at = ?
+                """,
+                (game_date, market, selection_key, side, line, fetched_at),
+            ).fetchall()
+            if not candidates:
+                continue
+
+            candidate_ids = [int(r["id"]) for r in candidates]
+            conn.execute(
+                f"UPDATE market_odds SET is_best_available = 0 WHERE id IN ({','.join(['?'] * len(candidate_ids))})",
+                tuple(candidate_ids),
+            )
+            best = max(
+                candidates,
+                key=lambda r: float(r["price_decimal"] if r["price_decimal"] is not None else (r["odds_decimal"] or 0.0)),
+            )
+            conn.execute("UPDATE market_odds SET is_best_available = 1 WHERE id = ?", (int(best["id"]),))
+            flagged += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return flagged
+
+
 def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
     """
     Fetch odds and write both:
@@ -187,9 +241,10 @@ def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
     deduped_normalized = _dedupe_market_rows(all_normalized_rows)
     if deduped_normalized:
         inserted = insert_many("market_odds", deduped_normalized)
+        best_flagged = _mark_best_available_for_fetch(deduped_normalized, fetched_at=fetched_at)
         print(
             f"  💾 Saved {inserted} normalized rows to market_odds "
-            f"({len(deduped_normalized)} attempted)"
+            f"({len(deduped_normalized)} attempted; best_available flagged={best_flagged})"
         )
 
     unsupported_counts = normalization_summary["unsupported_market_counts"]

@@ -11,6 +11,8 @@ from typing import Any
 SUPPORTED_MARKET_MAP: dict[str, dict[str, str]] = {
     "batter_home_runs": {"market": "HR", "entity_type": "batter"},
     "pitcher_strikeouts": {"market": "K", "entity_type": "pitcher"},
+    "pitcher_outs": {"market": "OUTS_RECORDED", "entity_type": "pitcher"},
+    "pitcher_total_outs": {"market": "OUTS_RECORDED", "entity_type": "pitcher"},
     "batter_hits": {"market": "HITS_LINE", "entity_type": "batter"},
     "batter_hits_1_plus": {"market": "HITS_1P", "entity_type": "batter"},
     "batter_total_bases": {"market": "TB_LINE", "entity_type": "batter"},

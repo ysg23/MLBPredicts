@@ -102,6 +102,9 @@ python3 run_pipeline.py --init
 # Pull daily upstream data (schedule/statcast/weather/odds)
 python3 run_pipeline.py --daily --date 2026-03-27
 
+# Refresh odds snapshots (scheduling-friendly standalone job)
+python3 refresh_odds.py --date 2026-03-27
+
 # Build daily feature snapshots
 python3 build_features.py --date 2026-03-27
 

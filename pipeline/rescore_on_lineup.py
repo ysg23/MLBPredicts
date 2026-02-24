@@ -280,8 +280,9 @@ def main() -> int:
     args = parser.parse_args()
 
     result = rescore_on_lineup(game_date=args.date, game_id=args.game_id, team_id=args.team_id)
+    has_failures = any(item.get("error") for item in result.get("market_results", []))
     print(result)
-    return 0
+    return 1 if has_failures else 0
 
 
 if __name__ == "__main__":

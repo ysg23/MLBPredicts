@@ -147,8 +147,9 @@ def main() -> int:
         all_markets=args.all_markets,
         only_game_id=args.game_id,
     )
+    has_failures = any(str(item.get("status", "")).lower() == "failed" for item in results)
     print(json.dumps({"game_date": date_str, "results": results}, indent=2, default=str))
-    return 0
+    return 1 if has_failures else 0
 
 
 if __name__ == "__main__":

@@ -270,6 +270,14 @@ CREATE INDEX IF NOT EXISTS idx_game_context_features_game_id ON game_context_fea
 CREATE INDEX IF NOT EXISTS idx_game_context_features_home_team ON game_context_features(home_team_id);
 CREATE INDEX IF NOT EXISTS idx_game_context_features_away_team ON game_context_features(away_team_id);
 
+-- Backfill columns that older pitcher_stats installs may not have.
+ALTER TABLE pitcher_stats ADD COLUMN IF NOT EXISTS batters_faced INTEGER;
+ALTER TABLE pitcher_stats ADD COLUMN IF NOT EXISTS k_pct DOUBLE PRECISION;
+ALTER TABLE pitcher_stats ADD COLUMN IF NOT EXISTS bb_pct DOUBLE PRECISION;
+ALTER TABLE pitcher_stats ADD COLUMN IF NOT EXISTS so_per_9 DOUBLE PRECISION;
+ALTER TABLE pitcher_stats ADD COLUMN IF NOT EXISTS k_pct_vs_lhb DOUBLE PRECISION;
+ALTER TABLE pitcher_stats ADD COLUMN IF NOT EXISTS k_pct_vs_rhb DOUBLE PRECISION;
+
 -- ============================================================
 -- GENERIC TABLE SHAPE HARDENING
 -- ============================================================

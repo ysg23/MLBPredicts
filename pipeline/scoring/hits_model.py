@@ -23,6 +23,9 @@ from .base_engine import (
 
 
 SUPPORTED_MARKETS = {"HITS_1P", "HITS_LINE"}
+MARKET = "HITS_1P"
+BET_TYPE_DEFAULT = "HITS"
+TARGET_MARKET: str | None = None
 
 
 def _to_float(value: Any) -> float | None:
@@ -166,7 +169,12 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
     weather_mult = _to_float((context or {}).get("weather_run_multiplier")) or 1.0
     lineups_confirmed_all = bool((context or {}).get("lineups_confirmed_home") and (context or {}).get("lineups_confirmed_away"))
 
-    for market in sorted(SUPPORTED_MARKETS):
+    if TARGET_MARKET in SUPPORTED_MARKETS:
+        markets = [str(TARGET_MARKET)]
+    else:
+        markets = sorted(SUPPORTED_MARKETS)
+
+    for market in markets:
         odds_rows = get_market_odds_rows(game_date=game.game_date, market=market, game_id=game.game_id)
         for odds in odds_rows:
             player_id = odds.get("player_id")

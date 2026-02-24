@@ -6,6 +6,7 @@ Usage:
     python run_pipeline.py --daily    # Daily: fetch all fresh data
     python run_pipeline.py --build-features --date 2026-03-27
     python run_pipeline.py --score --market HR --date 2026-03-27
+    python run_pipeline.py --score --all-markets --date 2026-03-27
     python run_pipeline.py --status   # Check database status
     python run_pipeline.py --test     # Quick test: just pull today's schedule
 """
@@ -196,35 +197,23 @@ def run_test():
 
 
 
-def run_score(date: str = None, market: str = "HR"):
+def run_score(date: str = None, market: str = "HR", all_markets: bool = False):
     """
     Run model scoring for a given market and date.
     Requires that --daily has already been run for that date (games, stats, weather, odds).
     """
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")
-    season = int(date.split("-")[0])
+    from score_markets import score_markets
 
-    from scoring.base_engine import score_market_for_date
-
-    market = market.upper()
-    if market in ("HR",):
-        from scoring import hr_model as mod
-    elif market in ("K","KS","SO"):
-        from scoring import k_model as mod
-    elif market in ("ML",):
-        from scoring import ml_model as mod
-    elif market in ("TOTAL","TOTALS"):
-        from scoring import totals_model as mod
-    elif market in ("F5_ML","F5ML"):
-        from scoring import f5_ml_model as mod
-    elif market in ("F5_TOTAL","F5TOTAL"):
-        from scoring import f5_total_model as mod
-    else:
-        raise ValueError(f"Unknown market: {market}")
-
-    saved = score_market_for_date(mod, game_date=date, season=season)
-    print(f"✅ Saved {saved} model_scores rows for market={mod.MARKET} date={date}")
+    results = score_markets(
+        game_date=date,
+        market=market,
+        all_markets=all_markets,
+        triggered_by="run_pipeline",
+    )
+    total_rows = sum(int(r.get("rows_written", 0)) for r in results)
+    print(f"✅ Scoring complete: markets={len(results)} rows_written={total_rows}")
 
 
 def run_build_features(date: str = None, all_dates: bool = False):
@@ -242,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("--daily", action="store_true", help="Run daily data pipeline")
     parser.add_argument("--build-features", action="store_true", help="Build daily feature snapshots")
     parser.add_argument("--all-dates", action="store_true", help="Use all known game dates")
+    parser.add_argument("--all-markets", action="store_true", help="Run default high-ROI market set")
     parser.add_argument("--score", action="store_true", help="Run market scoring")
     parser.add_argument("--market", type=str, default="HR", help="Market code for --score")
     parser.add_argument("--status", action="store_true", help="Show database status")
@@ -257,7 +247,7 @@ if __name__ == "__main__":
     elif args.build_features:
         run_build_features(date=args.date, all_dates=args.all_dates)
     elif args.score:
-        run_score(args.date, args.market)
+        run_score(args.date, args.market, args.all_markets)
     elif args.status:
         run_status()
     elif args.test:

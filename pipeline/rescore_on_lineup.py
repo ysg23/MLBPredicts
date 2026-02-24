@@ -31,6 +31,9 @@ GAME_MARKETS_OPTIONAL = ["TOTAL", "TEAM_TOTAL", "F5_TOTAL", "ML", "F5_ML"]
 MARKET_MODULES = {
     "HR": "scoring.hr_model",
     "K": "scoring.k_model",
+    "HITS_1P": "scoring.hits_model",
+    "HITS_LINE": "scoring.hits_model",
+    "TB_LINE": "scoring.tb_model",
     "ML": "scoring.ml_model",
     "TOTAL": "scoring.totals_model",
     "F5_ML": "scoring.f5_ml_model",

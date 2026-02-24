@@ -12,9 +12,9 @@ This repository currently contains:
   - market scoring engine + market models
   - grading, settlement, CLV capture
   - no-lookahead backtesting
-- `dashboard/` (placeholder; frontend work is deferred to a later phase)
+- `dashboard/` (Phase 8A market-explorer prototype)
 
-No frontend product/UI is implemented yet in this pass.
+A static Phase 8A dashboard prototype is included in `dashboard/index.html` for local iteration.
 
 ---
 

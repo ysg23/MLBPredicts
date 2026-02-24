@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MLBPredicts — Market Explorer (Phase 8A)</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, Arial, sans-serif; }
+      body { margin: 0; background: #0f1218; color: #e8edf7; }
+      .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+      .filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+      input, select, button { background: #171c25; color: #e8edf7; border: 1px solid #2f3643; padding: 8px; border-radius: 6px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border-bottom: 1px solid #2f3643; padding: 10px; vertical-align: top; }
+      .muted { color: #9ca6ba; font-size: 12px; }
+      .msg { background: #12311e; border: 1px solid #2f7a4e; padding: 8px; border-radius: 6px; }
+      .details { background: #121720; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Market Explorer</h1>
+      <div class="filters">
+        <input id="date" type="date" value="2026-03-27" />
+        <select id="market"></select>
+        <select id="signal"><option>ALL</option><option>BET</option><option>LEAN</option><option>FADE</option></select>
+        <select id="book"><option>ALL</option></select>
+        <select id="confidence"><option>ALL</option><option>HIGH</option><option>MED</option><option>LOW</option></select>
+        <label>Min Edge % <input id="edge" type="number" min="0" max="100" value="0" /></label>
+        <label><input id="lineup" type="checkbox" /> Lineup confirmed only</label>
+      </div>
+      <p id="message" class="msg hidden"></p>
+      <table>
+        <thead><tr><th>Pick</th><th>Market</th><th>Odds</th><th>Model</th><th>Implied</th><th>Edge</th><th>Signal</th><th>Flags</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <script>
+      const markets = ["HR","K","HITS_1P","HITS_LINE","TB_LINE","OUTS_RECORDED","ML","TOTAL","F5_ML","F5_TOTAL","TEAM_TOTAL"];
+      const sample = [
+        {id:1,game_date:"2026-03-27",market:"HR",sportsbook:"DraftKings",game_time:"19:10 ET",matchup:"NYY @ BOS",player:"Aaron Judge",side:"Over",line:0.5,odds:'+260',model_probability:0.29,implied_probability:0.22,edge_pct:0.07,model_score:82,signal:"BET",confidence_band:"HIGH",lineup_confirmed:true,weather_flag:"OK",reasons:["Barrel trend up 14d","Favorable pull-side wind"],risk:["High-variance market"],context:"62°F, 8mph out to LF; batting order 2"},
+        {id:2,game_date:"2026-03-27",market:"K",sportsbook:"FanDuel",game_time:"20:05 ET",matchup:"SEA @ HOU",player:"Luis Castillo",side:"Over",line:6.5,odds:'-108',model_probability:0.58,implied_probability:0.52,edge_pct:0.06,model_score:76,signal:"BET",confidence_band:"MED",lineup_confirmed:false,weather_flag:"DOME",reasons:["Opponent top-5 K% vs RHP","Pitch count trend stable"],risk:["Lineup not confirmed"],context:"Retractable roof"}
+      ];
+
+      const marketSel = document.getElementById('market');
+      markets.forEach((m) => marketSel.add(new Option(m,m)));
+      const uniqueBooks = [...new Set(sample.map((r)=>r.sportsbook))];
+      uniqueBooks.forEach((b)=>document.getElementById('book').add(new Option(b,b)));
+
+      function render() {
+        const date = document.getElementById('date').value;
+        const market = document.getElementById('market').value;
+        const signal = document.getElementById('signal').value;
+        const book = document.getElementById('book').value;
+        const confidence = document.getElementById('confidence').value;
+        const minEdge = Number(document.getElementById('edge').value || 0) / 100;
+        const lineupOnly = document.getElementById('lineup').checked;
+
+        const filtered = sample
+          .filter((r)=>r.game_date===date)
+          .filter((r)=>r.market===market)
+          .filter((r)=>signal==='ALL'||r.signal===signal)
+          .filter((r)=>book==='ALL'||r.sportsbook===book)
+          .filter((r)=>confidence==='ALL'||r.confidence_band===confidence)
+          .filter((r)=>r.edge_pct>=minEdge)
+          .filter((r)=>!lineupOnly||r.lineup_confirmed)
+          .sort((a,b)=>b.model_score-a.model_score || b.edge_pct-a.edge_pct);
+
+        const tbody = document.getElementById('rows');
+        tbody.innerHTML = '';
+        filtered.forEach((row) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${row.player}<div class="muted">${row.matchup} · ${row.game_time}</div></td>
+          <td>${row.side} ${row.line} (${row.market})</td>
+          <td>${row.odds} <span class="muted">${row.sportsbook}</span></td>
+          <td>${Math.round(row.model_probability*100)}% <span class="muted">score ${row.model_score}</span></td>
+          <td>${Math.round(row.implied_probability*100)}%</td>
+          <td>${(row.edge_pct*100).toFixed(1)}%</td>
+          <td>${row.signal} <span class="muted">${row.confidence_band}</span></td>
+          <td>${row.lineup_confirmed ? 'Lineup ✅' : 'Lineup ⚠️'} · ${row.weather_flag}</td>
+          <td><button data-id="${row.id}" class="details-btn">Details</button> <button data-id="${row.id}" class="log-btn">Log Bet</button></td>`;
+          const details = document.createElement('tr');
+          details.className = 'details hidden';
+          details.id = `details-${row.id}`;
+          details.innerHTML = `<td colspan="9"><strong>Reasons:</strong> ${row.reasons.join(' • ')}<br/><strong>Risk:</strong> ${row.risk.join(' • ')}<br/><strong>Context:</strong> ${row.context}</td>`;
+          tbody.appendChild(tr); tbody.appendChild(details);
+        });
+
+        document.querySelectorAll('.details-btn').forEach((btn)=>btn.onclick = () => {
+          document.getElementById(`details-${btn.dataset.id}`).classList.toggle('hidden');
+        });
+        document.querySelectorAll('.log-btn').forEach((btn)=>btn.onclick = () => {
+          const msg = document.getElementById('message');
+          msg.textContent = `Queued bet log for row ${btn.dataset.id} (Phase 8A placeholder).`;
+          msg.classList.remove('hidden');
+        });
+      }
+
+      ['date','market','signal','book','confidence','edge','lineup'].forEach((id)=>{
+        document.getElementById(id).addEventListener('change', render);
+      });
+      marketSel.value = 'HR';
+      render();
+    </script>
+  </body>
+</html>

@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS park_factors (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS games (
-    game_id BIGINT PRIMARY KEY,              -- MLB game PK
+    game_id BIGINT PRIMARY KEY,
     game_date DATE NOT NULL,
     game_time TEXT,
     home_team TEXT NOT NULL,
@@ -72,7 +72,6 @@ CREATE TABLE IF NOT EXISTS batter_stats (
     stat_date DATE NOT NULL,
     window_days INTEGER NOT NULL,
 
-    -- Core HR indicators
     barrel_pct DOUBLE PRECISION,
     hard_hit_pct DOUBLE PRECISION,
     avg_exit_velo DOUBLE PRECISION,
@@ -83,21 +82,18 @@ CREATE TABLE IF NOT EXISTS batter_stats (
     avg_launch_angle DOUBLE PRECISION,
     sweet_spot_pct DOUBLE PRECISION,
 
-    -- Power metrics
     iso_power DOUBLE PRECISION,
     slg DOUBLE PRECISION,
     woba DOUBLE PRECISION,
     xwoba DOUBLE PRECISION,
     xslg DOUBLE PRECISION,
 
-    -- Plate appearances & results
     pa INTEGER,
     ab INTEGER,
     hrs INTEGER,
     k_pct DOUBLE PRECISION,
     bb_pct DOUBLE PRECISION,
 
-    -- vs handedness splits
     iso_vs_lhp DOUBLE PRECISION,
     iso_vs_rhp DOUBLE PRECISION,
     barrel_pct_vs_lhp DOUBLE PRECISION,
@@ -125,7 +121,6 @@ CREATE TABLE IF NOT EXISTS pitcher_stats (
     stat_date DATE NOT NULL,
     window_days INTEGER NOT NULL,
 
-    -- HR vulnerability indicators
     hr_per_9 DOUBLE PRECISION,
     hr_per_fb DOUBLE PRECISION,
     fly_ball_pct DOUBLE PRECISION,
@@ -133,25 +128,21 @@ CREATE TABLE IF NOT EXISTS pitcher_stats (
     barrel_pct_against DOUBLE PRECISION,
     avg_exit_velo_against DOUBLE PRECISION,
 
-    -- Pitch quality indicators
     avg_fastball_velo DOUBLE PRECISION,
     fastball_velo_trend DOUBLE PRECISION,
     whiff_pct DOUBLE PRECISION,
     chase_pct DOUBLE PRECISION,
     zone_pct DOUBLE PRECISION,
 
-    -- Workload
     innings_pitched DOUBLE PRECISION,
     pitches_per_start DOUBLE PRECISION,
     days_rest INTEGER,
 
-    -- Overall quality
     era DOUBLE PRECISION,
     fip DOUBLE PRECISION,
     xfip DOUBLE PRECISION,
     xera DOUBLE PRECISION,
 
-    -- vs handedness splits
     hr_per_9_vs_lhb DOUBLE PRECISION,
     hr_per_9_vs_rhb DOUBLE PRECISION,
     iso_allowed_vs_lhb DOUBLE PRECISION,
@@ -237,14 +228,12 @@ CREATE TABLE IF NOT EXISTS hr_model_scores (
     opponent TEXT,
     opposing_pitcher TEXT,
 
-    -- Individual factor scores (0-100)
     barrel_score DOUBLE PRECISION,
     matchup_score DOUBLE PRECISION,
     park_weather_score DOUBLE PRECISION,
     pitcher_vuln_score DOUBLE PRECISION,
     hot_cold_score DOUBLE PRECISION,
 
-    -- Composite
     model_score DOUBLE PRECISION,
     model_prob DOUBLE PRECISION,
     book_implied_prob DOUBLE PRECISION,
@@ -252,7 +241,6 @@ CREATE TABLE IF NOT EXISTS hr_model_scores (
     signal TEXT CHECK(signal IN ('BET', 'LEAN', 'SKIP', 'FADE')),
     confidence TEXT CHECK(confidence IN ('HIGH', 'MEDIUM', 'LOW')),
 
-    -- Cross-reference with paid tools
     propfinder_signal TEXT,
     ballparkpal_signal TEXT,
     hrpredict_signal TEXT,
@@ -316,10 +304,9 @@ CREATE INDEX IF NOT EXISTS idx_hr_outcomes_date ON hr_outcomes(game_date);
 CREATE INDEX IF NOT EXISTS idx_hr_outcomes_player ON hr_outcomes(player_id, game_date);
 
 -- ============================================================
--- VIEWS (convenience queries)
+-- VIEWS
 -- ============================================================
 
--- Today's actionable picks
 CREATE OR REPLACE VIEW v_todays_picks AS
 SELECT
     ms.game_date,
@@ -351,23 +338,27 @@ LEFT JOIN weather w ON ms.game_id = w.game_id
 WHERE ms.game_date = CURRENT_DATE
 ORDER BY ms.model_score DESC;
 
--- Betting performance tracker
 CREATE OR REPLACE VIEW v_betting_performance AS
 SELECT
     game_date,
     COUNT(*) as total_bets,
     SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) as wins,
     SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) as losses,
-    ROUND(SUM(CASE WHEN result = 'win' THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100, 1) as win_pct,
+    ROUND(
+        CAST(SUM(CASE WHEN result = 'win' THEN 1.0 ELSE 0.0 END) AS NUMERIC)
+        / CAST(COUNT(*) AS NUMERIC) * 100
+    , 1) as win_pct,
     SUM(profit) as daily_profit,
     SUM(stake) as daily_volume,
-    ROUND(CAST(SUM(profit) AS NUMERIC) / NULLIF(SUM(stake), 0) * 100, 1) as roi_pct
+    ROUND(
+        CAST(SUM(profit) AS NUMERIC)
+        / NULLIF(CAST(SUM(stake) AS NUMERIC), 0) * 100
+    , 1) as roi_pct
 FROM bets
 WHERE result IN ('win', 'loss')
 GROUP BY game_date
 ORDER BY game_date DESC;
 
--- Tool accuracy comparison
 CREATE OR REPLACE VIEW v_tool_accuracy AS
 SELECT
     'My Model' as tool,
@@ -376,35 +367,42 @@ SELECT
     SUM(CASE WHEN ms.signal = 'BET' THEN 1 ELSE 0 END) as bet_total,
     ROUND(
         CAST(SUM(CASE WHEN ms.signal = 'BET' AND o.hit_hr THEN 1 ELSE 0 END) AS NUMERIC)
-        / NULLIF(SUM(CASE WHEN ms.signal = 'BET' THEN 1 ELSE 0 END), 0) * 100
+        / NULLIF(CAST(SUM(CASE WHEN ms.signal = 'BET' THEN 1 ELSE 0 END) AS NUMERIC), 0) * 100
     , 1) as bet_win_pct
 FROM hr_model_scores ms
 LEFT JOIN hr_outcomes o ON ms.game_id = o.game_id AND ms.player_id = o.player_id
 WHERE o.game_id IS NOT NULL;
 
 -- ============================================================
--- ROW LEVEL SECURITY (enable for Supabase frontend access)
+-- ROW LEVEL SECURITY
 -- ============================================================
 
--- Enable RLS on tables the frontend reads
 ALTER TABLE hr_model_scores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE weather ENABLE ROW LEVEL SECURITY;
 ALTER TABLE games ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stadiums ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr_outcomes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE batter_stats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pitcher_stats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr_odds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE umpires ENABLE ROW LEVEL SECURITY;
+ALTER TABLE park_factors ENABLE ROW LEVEL SECURITY;
 
--- Allow public read access (dashboard reads, pipeline writes with service key)
-CREATE POLICY "Public read access" ON hr_model_scores FOR SELECT USING (true);
-CREATE POLICY "Public read access" ON bets FOR SELECT USING (true);
-CREATE POLICY "Public read access" ON weather FOR SELECT USING (true);
-CREATE POLICY "Public read access" ON games FOR SELECT USING (true);
-CREATE POLICY "Public read access" ON stadiums FOR SELECT USING (true);
-CREATE POLICY "Public read access" ON hr_outcomes FOR SELECT USING (true);
+-- Public read access (dashboard reads with anon key)
+CREATE POLICY "Public read" ON hr_model_scores FOR SELECT USING (true);
+CREATE POLICY "Public read" ON bets FOR SELECT USING (true);
+CREATE POLICY "Public read" ON weather FOR SELECT USING (true);
+CREATE POLICY "Public read" ON games FOR SELECT USING (true);
+CREATE POLICY "Public read" ON stadiums FOR SELECT USING (true);
+CREATE POLICY "Public read" ON hr_outcomes FOR SELECT USING (true);
+CREATE POLICY "Public read" ON batter_stats FOR SELECT USING (true);
+CREATE POLICY "Public read" ON pitcher_stats FOR SELECT USING (true);
+CREATE POLICY "Public read" ON hr_odds FOR SELECT USING (true);
+CREATE POLICY "Public read" ON umpires FOR SELECT USING (true);
+CREATE POLICY "Public read" ON park_factors FOR SELECT USING (true);
 
--- Allow public insert/update on bets (for the bet logger in dashboard)
-CREATE POLICY "Public insert bets" ON bets FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public update bets" ON bets FOR UPDATE USING (true);
-
--- Allow public update on hr_model_scores (for manual tool signal input)
-CREATE POLICY "Public update scores" ON hr_model_scores FOR UPDATE USING (true);
+-- Public write on bets and model scores (dashboard inserts/updates)
+CREATE POLICY "Public insert" ON bets FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public update" ON bets FOR UPDATE USING (true);
+CREATE POLICY "Public update" ON hr_model_scores FOR UPDATE USING (true);

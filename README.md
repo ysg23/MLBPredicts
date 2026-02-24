@@ -42,6 +42,7 @@ This repository currently contains:
 │   ├── rescore_on_lineup.py
 │   ├── grade_results.py
 │   ├── run_pipeline.py
+│   ├── backfill_historical.py         # date-range historical ingest/backfill
 │   ├── Dockerfile
 │   ├── railway.toml
 │   └── requirements.txt
@@ -132,7 +133,31 @@ python3 grade_results.py --date 2026-03-27
 
 # backtesting
 python3 backtest.py --market HR --start-date 2025-04-01 --end-date 2025-09-30 --signals BET,LEAN
+
+# historical (multi-year) backfill
+python3 backfill_historical.py --start-date 2023-03-30 --end-date 2025-10-01 --build-features --score --all-markets --grade
 ```
+
+---
+
+
+## 3-Year Historical Backfill Plan
+
+If you want this system to become useful quickly, seed three seasons first (schedule + Statcast + scoring + outcomes).
+
+Recommended run order from `pipeline/`:
+
+```bash
+python3 run_pipeline.py --init
+python3 db/migrate.py
+python3 backfill_historical.py --start-date 2023-03-30 --end-date 2025-10-01 --build-features --score --all-markets --grade
+```
+
+Notes:
+- This command loops each date and runs schedule, umpires, batter stats, pitcher stats, then optional features/scoring/grading.
+- `--lineups` is optional for historical seeds (older games may not have lineup payloads).
+- Historical bookmaker odds are provider-dependent and are **not** guaranteed by `refresh_odds.py`; backfill first, then layer archival odds separately if needed for full CLV history.
+- Weather fetcher is real-time oriented; historical weather should be treated as missing unless you add a historical-weather provider.
 
 ---
 

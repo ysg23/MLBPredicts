@@ -31,7 +31,7 @@ def fetch_statcast_window(start_date: str, end_date: str) -> pd.DataFrame:
     return df
 
 
-def compute_batter_hr_stats(df: pd.DataFrame, window_days: int) -> list[dict]:
+def compute_batter_hr_stats(df: pd.DataFrame, window_days: int, stat_date: str | None = None) -> list[dict]:
     """
     From raw Statcast pitch data, compute per-batter HR-relevant aggregates.
     
@@ -53,7 +53,7 @@ def compute_batter_hr_stats(df: pd.DataFrame, window_days: int) -> list[dict]:
     # All plate appearances for counting stats
     pa_events = df[df["events"].notna()].copy()
 
-    stat_date = datetime.now().strftime("%Y-%m-%d")
+    stat_date = stat_date or datetime.now().strftime("%Y-%m-%d")
     rows = []
 
     for batter_id in batted["batter"].unique():
@@ -194,13 +194,16 @@ def compute_batter_hr_stats(df: pd.DataFrame, window_days: int) -> list[dict]:
     return rows
 
 
-def fetch_daily_batter_stats():
+def fetch_daily_batter_stats(as_of_date: str | None = None):
     """
     Main entry: fetch rolling window stats for all batters.
     Pulls data for the longest window (30 days) once, then slices for 7 and 14.
     """
     print("\n🏏 Fetching daily batter stats...")
-    today = datetime.now()
+    if as_of_date:
+        today = datetime.strptime(as_of_date, "%Y-%m-%d")
+    else:
+        today = datetime.now()
     max_window = max(BATTER_WINDOWS)
     
     start = (today - timedelta(days=max_window)).strftime("%Y-%m-%d")
@@ -218,7 +221,7 @@ def fetch_daily_batter_stats():
         window_df = full_df[full_df["game_date"] >= window_start]
         
         print(f"  📐 Computing {window}-day stats ({len(window_df):,} pitches)...")
-        rows = compute_batter_hr_stats(window_df, window)
+        rows = compute_batter_hr_stats(window_df, window, stat_date=today.strftime("%Y-%m-%d"))
         all_rows.extend(rows)
         print(f"  ✅ {len(rows)} batters computed for {window}-day window")
 

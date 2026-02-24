@@ -161,6 +161,25 @@ Notes:
 
 ---
 
+## Railway API Deploy
+
+For Railway API deployment:
+
+- Set service **Root Directory** to `pipeline/`.
+- API service starts with uvicorn bound to Railway dynamic port (`$PORT`, fallback `8000`).
+- Railway healthchecks should target `GET /health` (lightweight endpoint, no DB/API dependency).
+- Keep CLI workflows (`refresh_odds.py`, `build_features.py`, `score_markets.py`, `grade_results.py`, `backfill_historical.py`) as one-off or scheduled job commands, separate from the always-on API process.
+
+### Railway Healthcheck Troubleshooting
+
+If deploy is unhealthy, check:
+
+- `api.py` exists in `pipeline/` and exports `app` for `uvicorn api:app`.
+- `GET /health` exists and returns HTTP 200 JSON.
+- API process binds to Railway `$PORT` (not hardcoded `8000` only).
+
+---
+
 ## Job Scheduling Overview (Railway)
 
 Use separate jobs/services instead of one monolith run.

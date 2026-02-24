@@ -10,6 +10,7 @@ Stores rows in pitcher_stats with window_days in {14, 30}.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import inspect
 from typing import Optional
 
 import pandas as pd
@@ -139,6 +140,19 @@ def _compute_pitcher_metrics(df: pd.DataFrame) -> dict:
     }
 
 
+def _fetch_pitcher_window(start_dt: str, end_dt: str, pitcher_id: int) -> pd.DataFrame:
+    """Call pybaseball.statcast_pitcher with the supported pitcher-id argument name."""
+    params = inspect.signature(statcast_pitcher).parameters
+    base_kwargs = {"start_dt": start_dt, "end_dt": end_dt}
+
+    for key in ("player_id", "pitcher_id", "pitcher"):
+        if key in params:
+            return statcast_pitcher(**base_kwargs, **{key: pitcher_id})
+
+    # Fallback for unexpected signatures: pass pitcher id as positional third arg.
+    return statcast_pitcher(start_dt, end_dt, pitcher_id)
+
+
 def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = None) -> int:
     """
     Fetch pitcher rolling stats for all pitcher_ids and write to pitcher_stats table.
@@ -152,7 +166,7 @@ def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = N
     rows_to_upsert = []
     for pid in sorted(set([int(x) for x in pitcher_ids if x])):
         try:
-            df30 = statcast_pitcher(start_dt=_date_str(start_30), end_dt=_date_str(end_dt), pitcher_id=pid)
+            df30 = _fetch_pitcher_window(start_dt=_date_str(start_30), end_dt=_date_str(end_dt), pitcher_id=pid)
             if df30 is None or df30.empty:
                 continue
 

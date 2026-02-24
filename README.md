@@ -1,6 +1,6 @@
-# MLBPredicts Monorepo (Phase 6 Backend Complete)
+# MLBPredicts Monorepo (Phase 10B baseline)
 
-Backend-first MLB decision-support system for multi-market betting workflows (HR, K, Hits, Total Bases, Outs, ML, Totals, F5, Team Totals).
+Backend-first MLB decision-support system for multi-market betting workflows with a data-dense dashboard prototype.
 
 ## Current Scope
 
@@ -12,9 +12,11 @@ This repository currently contains:
   - market scoring engine + market models
   - grading, settlement, CLV capture
   - no-lookahead backtesting
-- `dashboard/` (Phase 8A market-explorer prototype)
-
-A static Phase 8A dashboard prototype is included in `dashboard/index.html` for local iteration.
+  - alerts/tiering/deployment scaffolding
+- `dashboard/` (Phase 8A/8B/8C static prototype)
+  - market explorer + filters + details
+  - performance / model health / CLV / bankroll views
+  - UX additions (exposure/correlation flags, saved filters, alerts panel, freshness indicators)
 
 ---
 
@@ -23,53 +25,38 @@ A static Phase 8A dashboard prototype is included in `dashboard/index.html` for 
 ```text
 .
 ├── pipeline/
+│   ├── api.py                         # FastAPI health/status service for Railway
+│   ├── alerts.py                      # Discord-first market alerts
 │   ├── db/
-│   │   ├── schema.sql                  # canonical PostgreSQL/Supabase schema
-│   │   ├── schema_sqlite.sql           # sqlite fallback schema (local-only)
+│   │   ├── schema.sql                 # canonical PostgreSQL/Supabase schema
+│   │   ├── schema_sqlite.sql          # sqlite fallback schema (local-only)
 │   │   ├── migrations/
-│   │   │   └── 001_phase_1a_foundation.sql
-│   │   ├── database.py                 # Postgres-first DB access layer
-│   │   └── migrate.py                  # SQL migration runner
-│   ├── fetchers/
-│   ├── features/
-│   ├── scoring/
-│   ├── grading/
-│   ├── utils/
-│   ├── run_pipeline.py
+│   │   │   ├── 001_phase_1a_foundation.sql
+│   │   │   └── 002_phase_9b_visibility_tier.sql
+│   │   ├── database.py                # Postgres-first DB access layer
+│   │   └── migrate.py                 # SQL migration runner
+│   ├── refresh_odds.py
+│   ├── fetch_lineups.py
 │   ├── build_features.py
 │   ├── score_markets.py
+│   ├── rescore_on_lineup.py
 │   ├── grade_results.py
-│   ├── backtest.py
-│   ├── clv.py
+│   ├── run_pipeline.py
+│   ├── Dockerfile
+│   ├── railway.toml
 │   └── requirements.txt
-├── dashboard/                          # reserved for future frontend phase
-├── CURSOR_BUILD_GUIDE.md
+├── dashboard/
+│   ├── index.html                     # static dashboard prototype
+│   ├── vercel.json                    # SPA rewrite/static config
+│   └── .env.example
 └── README.md
 ```
 
 ---
 
-## Database Strategy (Production vs Local)
+## Local Setup
 
-### Production (primary): Supabase PostgreSQL
-
-- Canonical schema: `pipeline/db/schema.sql`
-- Primary DB URL env vars supported by backend:
-  - `SUPABASE_DB_URL` (preferred)
-  - `DATABASE_URL`
-  - `SUPABASE_DATABASE_URL`
-
-When one of those URLs is present, backend DB code uses Postgres automatically.
-
-### Local fallback: sqlite
-
-- Fallback schema: `pipeline/db/schema_sqlite.sql`
-- Local DB file: `pipeline/db/mlb_hr.db`
-- Used only when no Postgres URL env var is set.
-
----
-
-## Backend Setup (Local / Cursor)
+### Backend
 
 ```bash
 cd pipeline
@@ -78,70 +65,120 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create `.env` in `pipeline/` (or project root) with at least:
+Create `.env` in `pipeline/` (or project root):
 
 ```env
-# Preferred for production-like local runs:
+# Database (prefer Postgres/Supabase)
 SUPABASE_DB_URL=postgresql://...
+# or DATABASE_URL / SUPABASE_DATABASE_URL
 
 # Data fetchers
 ODDS_API_KEY=...
 WEATHER_API_KEY=...
+
+# Alerts (optional)
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+ALERT_THRESHOLDS_JSON={"*":{"signals":["BET","LEAN"],"min_score":70,"max_rows":5}}
+```
+
+### Dashboard
+
+```bash
+cd dashboard
+python3 -m http.server 4173
+# open http://localhost:4173
 ```
 
 ---
 
-## Core Runtime Commands
+## Schema / Migration Steps
 
 From `pipeline/`:
 
 ```bash
-# Initialize schema + static stadium data
+# initialize schema and static refs
 python3 run_pipeline.py --init
 
-# Pull daily upstream data (schedule/statcast/weather/odds)
+# run additive Postgres migrations
+python3 db/migrate.py
+```
+
+Tiering extension point introduced:
+- `model_scores.visibility_tier` (`FREE` / `PRO`) via schema + migration.
+
+---
+
+## Common CLI Commands
+
+From `pipeline/`:
+
+```bash
+# health/status
+python3 run_pipeline.py --status
+python3 api.py  # (for local import check)
+
+# data jobs
 python3 run_pipeline.py --daily --date 2026-03-27
-
-# Refresh odds snapshots (scheduling-friendly standalone job)
 python3 refresh_odds.py --date 2026-03-27
-
-# Build daily feature snapshots
+python3 fetch_lineups.py --date 2026-03-27
 python3 build_features.py --date 2026-03-27
 
-# Score one market
-python3 score_markets.py --date 2026-03-27 --market HR
+# scoring/rescoring
+python3 score_markets.py --date 2026-03-27 --all-markets --send-alerts
+python3 rescore_on_lineup.py --date 2026-03-27 --send-alerts
 
-# Score default market set
-python3 score_markets.py --date 2026-03-27 --all-markets
-
-# Grade outcomes + settle bets + update CLV
+# grading / clv
 python3 grade_results.py --date 2026-03-27
 
-# Backtest (no-lookahead odds matching)
+# backtesting
 python3 backtest.py --market HR --start-date 2025-04-01 --end-date 2025-09-30 --signals BET,LEAN
-
-# Optional: run additive SQL migrations
-python3 db/migrate.py
 ```
 
 ---
 
-## Deployment Plan (Current)
+## Job Scheduling Overview (Railway)
 
-- **Supabase**: primary PostgreSQL datastore
-- **Railway**: scheduled/triggered backend jobs (`run_pipeline.py`, `build_features.py`, `score_markets.py`, `grade_results.py`)
-- **Vercel**: reserved for future `dashboard/` phase
+Use separate jobs/services instead of one monolith run.
 
-### Suggested Railway job split
-
-- early AM: `run_pipeline.py --daily --date <today>`
-- after odds refresh: `build_features.py --date <today>`
-- pre-lock windows: `score_markets.py --date <today> --all-markets`
-- post-game/final: `grade_results.py --date <today>`
+- API service:
+  - `uvicorn api:app --host 0.0.0.0 --port ${PORT}`
+- Odds refresh:
+  - `python refresh_odds.py --date <today>`
+- Features:
+  - `python build_features.py --date <today>`
+- Scoring:
+  - `python score_markets.py --all-markets --date <today> --send-alerts`
+- Grading:
+  - `python grade_results.py --date <today>`
+- Lineup polling/rescore:
+  - `python fetch_lineups.py --date <today> && python rescore_on_lineup.py --date <today> --send-alerts`
 
 ---
 
-## Phase Boundary
+## Supported Markets
 
-This repo is stabilized through backend Phase 6 (scoring, grading, CLV, backtesting).  
-Dashboard/UI, alerting, and productized frontend flows are intentionally deferred to later phases.
+- `HR`
+- `K`
+- `HITS_1P`
+- `HITS_LINE`
+- `TB_LINE`
+- `OUTS_RECORDED`
+- `ML`
+- `TOTAL`
+- `F5_ML`
+- `F5_TOTAL`
+- `TEAM_TOTAL`
+
+---
+
+## Known Limitations / TODOs
+
+- Dashboard is static prototype (no authenticated Supabase read/write wiring yet).
+- `Log Bet` button is currently a UI placeholder hook.
+- Alerts are Discord-first and depend on `DISCORD_WEBHOOK_URL`.
+- Proxy-restricted environments may block external APIs (MLB/odds/weather).
+- Billing is **not** implemented yet; tiering is schema/config extension-point only.
+- Future integration points:
+  - Supabase Auth for user/session-level visibility checks
+  - Stripe for paid tiers / entitlements
+  - API endpoints for dashboard live data and mutations

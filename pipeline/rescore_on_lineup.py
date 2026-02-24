@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import importlib
 from collections import defaultdict
+
+from alerts import send_market_alerts
 from datetime import datetime
 from typing import Any
 
@@ -201,6 +203,7 @@ def rescore_on_lineup(
     game_date: str | None = None,
     game_id: int | None = None,
     team_id: str | None = None,
+    send_alerts: bool = False,
 ) -> dict[str, Any]:
     game_date = game_date or _today_str()
     changed_pairs = _detect_changed_lineup_pairs(game_date=game_date, game_id=game_id, team_id=team_id)
@@ -246,6 +249,11 @@ def rescore_on_lineup(
                 rows_scored=rows_written,
                 metadata=result,
             )
+            if send_alerts and result.get("supported") and rows_written > 0:
+                try:
+                    result["alert"] = send_market_alerts(game_date=game_date, market=market)
+                except Exception as exc:
+                    result["alert"] = {"sent": False, "reason": f"error:{exc}"}
             market_results.append(result)
         except Exception as exc:
             fail_score_run(
@@ -277,9 +285,10 @@ def main() -> int:
     parser.add_argument("--date", type=str, help="Target game date (YYYY-MM-DD), defaults to today")
     parser.add_argument("--game-id", type=int, help="Optional game_id scope")
     parser.add_argument("--team-id", type=str, help="Optional team_id scope")
+    parser.add_argument("--send-alerts", action="store_true", help="Send Discord alerts for affected markets")
     args = parser.parse_args()
 
-    result = rescore_on_lineup(game_date=args.date, game_id=args.game_id, team_id=args.team_id)
+    result = rescore_on_lineup(game_date=args.date, game_id=args.game_id, team_id=args.team_id, send_alerts=args.send_alerts)
     has_failures = any(item.get("error") for item in result.get("market_results", []))
     print(result)
     return 1 if has_failures else 0

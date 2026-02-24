@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from config import ODDS_API_BASE, ODDS_API_KEY
+from clv import capture_closing_lines_for_date
 from db.database import get_connection, insert_many, query
 from utils.odds_normalizer import (
     SUPPORTED_ODDS_API_MARKETS,
@@ -239,6 +240,7 @@ def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
         print(f"  💾 Saved {inserted} consolidated HR rows to hr_odds")
 
     deduped_normalized = _dedupe_market_rows(all_normalized_rows)
+    touched_dates: set[str] = {str(r.get("game_date")) for r in deduped_normalized if r.get("game_date")}
     if deduped_normalized:
         inserted = insert_many("market_odds", deduped_normalized)
         best_flagged = _mark_best_available_for_fetch(deduped_normalized, fetched_at=fetched_at)
@@ -246,6 +248,14 @@ def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
             f"  💾 Saved {inserted} normalized rows to market_odds "
             f"({len(deduped_normalized)} attempted; best_available flagged={best_flagged})"
         )
+        # Keep closing_lines current during odds refreshes.
+        for touched_date in sorted(touched_dates):
+            clv_summary = capture_closing_lines_for_date(touched_date)
+            print(
+                "  📉 Closing snapshot sync: "
+                f"date={touched_date} groups={clv_summary.get('groups', 0)} "
+                f"upserted={clv_summary.get('upserted', 0)}"
+            )
 
     unsupported_counts = normalization_summary["unsupported_market_counts"]
     if unsupported_counts:

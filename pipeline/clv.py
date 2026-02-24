@@ -1,0 +1,319 @@
+"""
+Closing line value (CLV) capture and bet update helpers.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime
+from typing import Any
+
+from db.database import get_connection, query
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _implied_prob_from_american(american: int | float | None) -> float | None:
+    value = _to_float(american)
+    if value is None or value == 0:
+        return None
+    if value > 0:
+        return 100.0 / (value + 100.0)
+    return abs(value) / (abs(value) + 100.0)
+
+
+def _ensure_closing_lines_table() -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS closing_lines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_date DATE NOT NULL,
+                market TEXT NOT NULL,
+                game_id INTEGER NOT NULL,
+                event_id TEXT,
+                entity_type TEXT,
+                player_id INTEGER,
+                team_id TEXT,
+                opponent_team_id TEXT,
+                team_abbr TEXT,
+                opponent_team_abbr TEXT,
+                selection_key TEXT,
+                side TEXT,
+                bet_type TEXT,
+                line REAL,
+                sportsbook TEXT,
+                price_american INTEGER,
+                price_decimal REAL,
+                implied_probability REAL,
+                fetched_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(market, game_id, player_id, team_id, selection_key, side, bet_type, line)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_closing_lines_date_market ON closing_lines(game_date, market)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_closing_lines_selection_key ON closing_lines(selection_key)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _selection_groups(game_date: str) -> list[dict[str, Any]]:
+    return query(
+        """
+        SELECT
+            game_date, market, game_id, event_id, entity_type, player_id, team_id,
+            opponent_team_id, team_abbr, opponent_team_abbr, selection_key, side, bet_type, line
+        FROM market_odds
+        WHERE game_date = ?
+        GROUP BY game_date, market, game_id, event_id, entity_type, player_id, team_id,
+                 opponent_team_id, team_abbr, opponent_team_abbr, selection_key, side, bet_type, line
+        """,
+        (game_date,),
+    )
+
+
+def _latest_rows_per_book(group: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = query(
+        """
+        SELECT *
+        FROM market_odds
+        WHERE game_date = ?
+          AND market = ?
+          AND game_id = ?
+          AND player_id IS ?
+          AND team_id IS ?
+          AND selection_key IS ?
+          AND side IS ?
+          AND bet_type IS ?
+          AND line IS ?
+        ORDER BY fetched_at DESC
+        """,
+        (
+            group.get("game_date"),
+            group.get("market"),
+            group.get("game_id"),
+            group.get("player_id"),
+            group.get("team_id"),
+            group.get("selection_key"),
+            group.get("side"),
+            group.get("bet_type"),
+            group.get("line"),
+        ),
+    )
+    latest_by_book: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        book = str(row.get("sportsbook") or "")
+        if book and book not in latest_by_book:
+            latest_by_book[book] = row
+    return list(latest_by_book.values())
+
+
+def _choose_best(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    return max(
+        rows,
+        key=lambda row: _to_float(row.get("price_decimal") or row.get("odds_decimal")) or 0.0,
+    )
+
+
+def capture_closing_lines_for_date(game_date: str) -> dict[str, int]:
+    _ensure_closing_lines_table()
+    groups = _selection_groups(game_date)
+    if not groups:
+        return {"groups": 0, "upserted": 0}
+
+    now = datetime.utcnow().isoformat()
+    rows_to_upsert: list[dict[str, Any]] = []
+    for group in groups:
+        latest_rows = _latest_rows_per_book(group)
+        best = _choose_best(latest_rows)
+        if not best:
+            continue
+        rows_to_upsert.append(
+            {
+                "game_date": group.get("game_date"),
+                "market": group.get("market"),
+                "game_id": group.get("game_id"),
+                "event_id": group.get("event_id"),
+                "entity_type": group.get("entity_type"),
+                "player_id": group.get("player_id"),
+                "team_id": group.get("team_id"),
+                "opponent_team_id": group.get("opponent_team_id"),
+                "team_abbr": group.get("team_abbr"),
+                "opponent_team_abbr": group.get("opponent_team_abbr"),
+                "selection_key": group.get("selection_key"),
+                "side": group.get("side"),
+                "bet_type": group.get("bet_type"),
+                "line": group.get("line"),
+                "sportsbook": best.get("sportsbook"),
+                "price_american": best.get("price_american"),
+                "price_decimal": best.get("price_decimal"),
+                "implied_probability": best.get("implied_probability"),
+                "fetched_at": best.get("fetched_at"),
+                "updated_at": now,
+            }
+        )
+
+    if not rows_to_upsert:
+        return {"groups": len(groups), "upserted": 0}
+
+    conn = get_connection()
+    try:
+        cols = list(rows_to_upsert[0].keys())
+        placeholders = ", ".join(["?"] * len(cols))
+        col_str = ", ".join(cols)
+        conflict_cols = "market, game_id, player_id, team_id, selection_key, side, bet_type, line"
+        update_cols = [c for c in cols if c not in {"market", "game_id", "player_id", "team_id", "selection_key", "side", "bet_type", "line"}]
+        update_sql = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
+        conn.executemany(
+            f"""
+            INSERT INTO closing_lines ({col_str})
+            VALUES ({placeholders})
+            ON CONFLICT({conflict_cols}) DO UPDATE SET {update_sql}
+            """,
+            [tuple(row[c] for c in cols) for row in rows_to_upsert],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"groups": len(groups), "upserted": len(rows_to_upsert)}
+
+
+def update_bet_clv_for_date(game_date: str) -> dict[str, int]:
+    _ensure_closing_lines_table()
+    bets = query(
+        """
+        SELECT *
+        FROM bets
+        WHERE game_date = ?
+        """,
+        (game_date,),
+    )
+    if not bets:
+        return {"bets": 0, "updated": 0}
+
+    conn = get_connection()
+    updated = 0
+    try:
+        for bet in bets:
+            market = str(bet.get("market") or "").upper()
+            game_id = bet.get("game_id")
+            if game_id is None:
+                continue
+            selection_key = bet.get("selection_key")
+            if selection_key:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM closing_lines
+                    WHERE game_date = ? AND market = ? AND game_id = ? AND selection_key = ?
+                    LIMIT 1
+                    """,
+                    (game_date, market, game_id, selection_key),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM closing_lines
+                    WHERE game_date = ?
+                      AND market = ?
+                      AND game_id = ?
+                      AND player_id IS ?
+                      AND team_id IS ?
+                      AND side IS ?
+                      AND bet_type IS ?
+                      AND line IS ?
+                    LIMIT 1
+                    """,
+                    (
+                        game_date,
+                        market,
+                        game_id,
+                        bet.get("player_id"),
+                        bet.get("team_id"),
+                        bet.get("side"),
+                        bet.get("bet_type"),
+                        bet.get("line"),
+                    ),
+                ).fetchall()
+            if not rows:
+                continue
+            closing = dict(rows[0])
+            implied_close = _to_float(closing.get("implied_probability"))
+            if implied_close is None:
+                implied_close = _implied_prob_from_american(closing.get("price_american"))
+            implied_open = _to_float(bet.get("implied_prob_open"))
+            if implied_open is None:
+                implied_open = _implied_prob_from_american(bet.get("odds"))
+            clv = None
+            if implied_open is not None and implied_close is not None:
+                clv = implied_open - implied_close
+
+            line_open = _to_float(bet.get("line"))
+            line_close = _to_float(closing.get("line"))
+            line_delta = None
+            if line_open is not None and line_close is not None:
+                line_delta = line_close - line_open
+
+            conn.execute(
+                """
+                UPDATE bets
+                SET odds_close = ?,
+                    implied_prob_close = ?,
+                    clv_open_to_close = ?,
+                    line_delta = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (closing.get("price_american"), implied_close, clv, line_delta, bet["id"]),
+            )
+            updated += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"bets": len(bets), "updated": updated}
+
+
+def clv_summary(game_date: str) -> list[dict[str, Any]]:
+    return query(
+        """
+        SELECT
+            game_date,
+            market,
+            COUNT(*) AS bets_count,
+            AVG(clv_open_to_close) AS avg_clv,
+            AVG(line_delta) AS avg_line_delta
+        FROM bets
+        WHERE game_date = ?
+          AND clv_open_to_close IS NOT NULL
+        GROUP BY game_date, market
+        ORDER BY market
+        """,
+        (game_date,),
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Capture closing lines and update bet CLV")
+    parser.add_argument("--date", type=str, required=True, help="Target game date YYYY-MM-DD")
+    args = parser.parse_args()
+    capture = capture_closing_lines_for_date(args.date)
+    clv = update_bet_clv_for_date(args.date)
+    print({"capture": capture, "clv_update": clv, "summary": clv_summary(args.date)})
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

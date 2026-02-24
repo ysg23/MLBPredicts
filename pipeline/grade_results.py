@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime
 from typing import Any
 
+from clv import capture_closing_lines_for_date, update_bet_clv_for_date
 from db.database import get_connection, query, upsert_many
 from grading.base_grader import (
     SUPPORTED_MARKETS,
@@ -193,6 +194,8 @@ def grade_results_for_date(game_date: str) -> dict[str, Any]:
     game_outcomes = grade_game_market_outcomes(selections)
     all_outcomes = player_outcomes + game_outcomes
     upserted = _upsert_outcomes(all_outcomes)
+    closing_capture = capture_closing_lines_for_date(game_date)
+    clv_update = update_bet_clv_for_date(game_date)
     settle_summary = _settle_bets(game_date, all_outcomes)
     return {
         "game_date": game_date,
@@ -200,6 +203,9 @@ def grade_results_for_date(game_date: str) -> dict[str, Any]:
         "player_outcomes": len(player_outcomes),
         "game_outcomes": len(game_outcomes),
         "outcomes_upserted": upserted,
+        "closing_groups": closing_capture.get("groups", 0),
+        "closing_upserted": closing_capture.get("upserted", 0),
+        "bets_clv_updated": clv_update.get("updated", 0),
         **settle_summary,
     }
 

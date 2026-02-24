@@ -1,8 +1,10 @@
 """
 Database connection and helper functions.
 """
+import json
 import sqlite3
 from pathlib import Path
+
 from config import DB_PATH
 
 
@@ -81,12 +83,105 @@ def query(sql: str, params: tuple = ()) -> list[dict]:
         conn.close()
 
 
+def _serialize_metadata(metadata: dict | None) -> str:
+    if metadata is None:
+        return "{}"
+    return json.dumps(metadata)
+
+
+def create_score_run(
+    run_type: str,
+    game_date: str | None = None,
+    market: str | None = None,
+    triggered_by: str = "system",
+    metadata: dict | None = None,
+) -> int:
+    """
+    Create and return a score_runs audit row id.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO score_runs (
+                run_type, game_date, market, triggered_by, status, started_at, metadata_json, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'started', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+            """,
+            (run_type, game_date, market, triggered_by, _serialize_metadata(metadata)),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def complete_score_run(
+    score_run_id: int,
+    status: str,
+    rows_scored: int = 0,
+    metadata: dict | None = None,
+) -> None:
+    """
+    Mark a score_runs row complete and update summary fields.
+    """
+    conn = get_connection()
+    try:
+        if metadata is None:
+            conn.execute(
+                """
+                UPDATE score_runs
+                SET status = ?,
+                    rows_scored = ?,
+                    finished_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, rows_scored, score_run_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE score_runs
+                SET status = ?,
+                    rows_scored = ?,
+                    finished_at = CURRENT_TIMESTAMP,
+                    metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, rows_scored, _serialize_metadata(metadata), score_run_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def fail_score_run(
+    score_run_id: int,
+    error_message: str,
+    metadata: dict | None = None,
+) -> None:
+    """
+    Mark a score run failed and attach an error payload.
+    """
+    payload = {"error_message": error_message}
+    if metadata:
+        payload.update(metadata)
+    complete_score_run(
+        score_run_id=score_run_id,
+        status="failed",
+        rows_scored=0,
+        metadata=payload,
+    )
+
+
 def get_status() -> dict:
     """Get row counts for all tables."""
     conn = get_connection()
     tables = ["stadiums", "park_factors", "games", "batter_stats",
               "pitcher_stats", "weather", "hr_odds", "umpires",
-              "hr_model_scores", "bets"]
+              "hr_model_scores", "bets", "score_runs"]
     status = {}
     for table in tables:
         try:

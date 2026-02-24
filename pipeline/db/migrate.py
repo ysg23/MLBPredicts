@@ -146,6 +146,13 @@ def run_migrations() -> int:
     conn, backend = get_connection()
     print(f"Running migrations using backend={backend}")
     try:
+        if backend != "postgres":
+            print(
+                "No Postgres URL detected. Skipping SQL migrations: "
+                "sqlite fallback should use schema_sqlite.sql via run_pipeline --init."
+            )
+            return 0
+
         _ensure_schema_migrations(conn, backend)
         applied = _fetch_applied_migrations(conn, backend)
         pending = [p for p in _migration_files() if p.name not in applied]

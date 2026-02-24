@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,41 @@ def _get_postgres_url() -> str:
         or os.getenv("SUPABASE_DATABASE_URL", "")
     ).strip()
 
+
+
+
+def _postgres_url_hint(postgres_url: str) -> str | None:
+    if not postgres_url:
+        return None
+    if postgres_url.startswith("https://") or postgres_url.startswith("http://"):
+        return (
+            "SUPABASE_DB_URL must be a Postgres connection string (postgresql://...), "
+            "not the Supabase Project URL."
+        )
+
+    parsed = urlsplit(postgres_url)
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        return "Use a postgres:// or postgresql:// connection string for SUPABASE_DB_URL."
+
+    if not parsed.hostname:
+        return "Connection string is missing a database host."
+
+    # Common copy/paste issue: password contains reserved chars like '@'.
+    raw_creds = parsed.netloc.rsplit("@", 1)[0] if "@" in parsed.netloc else ""
+    if ":" in raw_creds:
+        raw_password = raw_creds.split(":", 1)[1]
+        if "@" in raw_password:
+            return (
+                "Detected '@' in DB password. URL-encode special characters in the password "
+                "(e.g. '@' -> '%40')."
+            )
+
+    if "supabase.co" in parsed.netloc and not parsed.hostname.startswith("db."):
+        return (
+            "Supabase direct DB host usually starts with 'db.' (Direct connection string), "
+            "not the project API host."
+        )
+    return None
 
 def _split_statements(sql_text: str) -> list[str]:
     statements: list[str] = []
@@ -112,13 +148,22 @@ def get_connection() -> DBConnection:
     - sqlite fallback otherwise
     """
     postgres_url = _get_postgres_url()
-    if postgres_url.startswith("postgres"):
+    if postgres_url:
+        hint = _postgres_url_hint(postgres_url)
+        if hint:
+            raise RuntimeError(f"Invalid Postgres configuration. {hint}")
         if psycopg is None:
             raise RuntimeError(
                 "Postgres URL detected but psycopg is not installed. "
                 "Install psycopg[binary] in pipeline requirements."
             )
-        raw = psycopg.connect(postgres_url, row_factory=dict_row)
+        try:
+            raw = psycopg.connect(postgres_url, row_factory=dict_row)
+        except Exception as exc:  # noqa: BLE001
+            hint = _postgres_url_hint(postgres_url)
+            if hint:
+                raise RuntimeError(f"Postgres connection failed. {hint}") from exc
+            raise
         return DBConnection(raw=raw, backend="postgres")
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)

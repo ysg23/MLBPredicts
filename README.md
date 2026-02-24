@@ -70,8 +70,9 @@ Create `.env` in `pipeline/` (or project root):
 
 ```env
 # Database (prefer Postgres/Supabase)
-SUPABASE_DB_URL=postgresql://...
+SUPABASE_DB_URL=postgresql://postgres:<url-encoded-password>@db.<project-ref>.supabase.co:5432/postgres
 # or DATABASE_URL / SUPABASE_DATABASE_URL
+# NOTE: This is NOT the Supabase Project URL and NOT the publishable key.
 
 # Data fetchers
 ODDS_API_KEY=...
@@ -81,6 +82,13 @@ WEATHER_API_KEY=...
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ALERT_THRESHOLDS_JSON={"*":{"signals":["BET","LEAN"],"min_score":70,"max_rows":5}}
 ```
+
+### Supabase env sanity check
+
+- `SUPABASE_DB_URL` / `DATABASE_URL` = **Direct connection string** from Supabase Database settings.
+- Do **not** set `SUPABASE_DB_URL` to `https://<project-ref>.supabase.co` (that is API URL for frontend).
+- Do **not** set it to publishable/anon key.
+- If your DB password has special chars (e.g. `@`, `:`, `/`, `#`), URL-encode them in the connection string.
 
 ### Dashboard
 

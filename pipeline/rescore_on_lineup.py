@@ -36,6 +36,7 @@ MARKET_MODULES = {
     "TB_LINE": "scoring.tb_model",
     "ML": "scoring.ml_model",
     "TOTAL": "scoring.totals_model",
+    "TEAM_TOTAL": "scoring.team_totals_model",
     "F5_ML": "scoring.f5_ml_model",
     "F5_TOTAL": "scoring.f5_total_model",
 }

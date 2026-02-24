@@ -1,63 +1,105 @@
-# MLB HR Prop Data Pipeline
+# MLBPredicts — MLB Multi-Market Bet Assist Engine
 
-Automated data pipeline for home run prop analysis. Pulls player stats, pitcher matchups, park factors, weather, and odds into a local SQLite database for daily model scoring.
+A fast, modular MLB betting decision-support platform built for **multi-market analysis** (HR, Ks, Hits, Total Bases, ML, Totals, F5, Team Totals, and more).
 
-## Setup
+This project is being built as a **backend-first system** with a shared feature store, market-agnostic scoring pipeline, and operational refresh logic (lineups, umpires, weather, odds) designed for real-world betting workflows.
 
-```bash
-pip install pybaseball requests pandas numpy python-dotenv
-```
+---
 
-## Configuration
+## Project Goal
 
-Copy `.env.example` to `.env` and add your API keys:
-```
-ODDS_API_KEY=your_key_here    # Free tier: https://the-odds-api.com
-WEATHER_API_KEY=your_key_here  # Free: https://openweathermap.org
-```
+Build a **sellable, scalable MLB bet assist app** that helps users answer:
 
-## Usage
+- What are the best betting opportunities today?
+- Why does the model like them?
+- How strong is the edge vs the market?
+- What changed (lineup, umpire, weather, odds move)?
+- How has the model performed over time (ROI / CLV / by market)?
 
-```bash
-# One-time: Initialize database + load historical data (last 2 seasons)
-python run_pipeline.py --init
+This is a **decision-support platform**, not a blind picks feed.
 
-# Daily: Pull today's matchups, stats, weather, and odds
-python run_pipeline.py --daily
+---
 
-# Check what's in the database
-python run_pipeline.py --status
-```
+## Current Status
+
+### ✅ Implemented (Foundation)
+- Multi-market database schema foundation
+- Generic market tables for:
+  - `market_odds`
+  - `market_outcomes`
+  - `model_scores`
+  - `bets`
+- `score_runs` audit trail table
+- `lineups` table
+- Feature-store tables:
+  - `batter_daily_features`
+  - `pitcher_daily_features`
+  - `team_daily_features`
+  - `game_context_features`
+- Odds normalization utility (The Odds API → normalized `market_odds`)
+- Early pipeline/database scaffolding and migrations
+
+### 🔄 In Progress
+- Feature builders / orchestration hardening
+- Lineups + umpire fetchers
+- Re-scoring triggers on lineup changes
+- Market scoring modules
+- Grading + CLV workflows
+
+### 🧱 Planned
+- Dashboard (`/dashboard`) for Vercel deployment
+- Market explorer UI
+- CLV/performance analytics views
+- Alerts / trigger-based notifications
+- Subscription-ready product workflows
+
+---
 
 ## Architecture
 
-```
-run_pipeline.py          → Main entry point
-config.py                → Settings, API keys, constants
-db/
-  schema.sql             → SQLite table definitions
-  database.py            → DB connection + helpers
-fetchers/
-  statcast.py            → Barrel %, exit velo, HR/FB via pybaseball
-  pitchers.py            → Pitcher HR/9, FB%, handedness splits
-  schedule.py            → Today's games + lineups via MLB Stats API
-  weather.py             → Wind speed/dir, temp by stadium
-  odds.py                → HR prop odds via The Odds API
-  park_factors.py        → Park HR factors (static + wind-adjusted)
-  umpires.py             → Home plate ump assignments
-utils/
-  stadiums.py            → Stadium coords + dimensions
-  calculations.py        → Rolling averages, z-scores, etc.
-```
+### Stack
+- **Cursor** — implementation workflow / code generation
+- **GitHub** — source control
+- **Supabase (Postgres)** — primary database
+- **Railway** — pipeline jobs / cron / optional API trigger service
+- **Vercel** — frontend dashboard hosting (later phase)
 
-## Data Refresh Schedule
+### Data Sources
+- **Statcast / pybaseball** — batted-ball + player-level event data
+- **MLB Stats API** — schedule, probable pitchers, lineups, game state, umpires
+- **OpenWeather API** — weather conditions / updates
+- **The Odds API** — player props + game markets (coverage dependent)
+- **FanGraphs Park Factors** — seasonal park environment context
 
-| Source | Frequency | Method |
-|--------|-----------|--------|
-| Statcast (barrel %, EV) | Daily overnight | pybaseball (14-day window) |
-| Pitcher splits | Daily overnight | pybaseball |
-| Game schedule + lineups | Daily 10AM ET | MLB Stats API |
-| Weather | Daily 10AM ET + 2PM update | OpenWeather API |
-| Odds | Every 30 min on game days | The Odds API |
-| Park factors | Seasonal (static load) | FanGraphs CSV |
-| Umpire assignments | Daily 10AM ET | MLB Stats API |
+---
+
+## Repository Structure (Clean Monorepo Layout)
+
+> Backend is standardized under `/pipeline`.  
+> Frontend will live in `/dashboard` (created in later phase).
+
+```text
+.
+├── pipeline/
+│   ├── db/
+│   │   ├── schema.sql
+│   │   ├── database.py
+│   │   ├── migrate.py
+│   │   └── migrations/
+│   ├── fetchers/
+│   ├── features/
+│   ├── scoring/
+│   ├── grading/
+│   ├── utils/
+│   ├── run_pipeline.py
+│   ├── build_features.py
+│   ├── score_markets.py
+│   ├── grade_results.py
+│   ├── refresh_odds.py
+│   ├── fetch_lineups.py
+│   ├── rescore_on_lineup.py
+│   └── .env.example
+├── dashboard/                 # planned / added in later phase
+├── CURSOR_BUILD_GUIDE.md      # source of truth for build phases
+├── README.md
+└── .gitignore

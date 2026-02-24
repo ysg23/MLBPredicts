@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,11 +20,31 @@ except ImportError:  # pragma: no cover - optional dependency
 
 
 def _get_postgres_url() -> str:
-    return (
+    # Priority order: explicit DB URLs first, then Railway/Postgres component vars.
+    direct = (
         os.getenv("SUPABASE_DB_URL", "")
         or os.getenv("DATABASE_URL", "")
         or os.getenv("SUPABASE_DATABASE_URL", "")
+        or os.getenv("POSTGRES_URL", "")
+        or os.getenv("POSTGRESQL_URL", "")
     ).strip()
+    if direct:
+        return direct
+
+    # Fallback: assemble from discrete PG* variables when URL is not provided.
+    pg_host = os.getenv("PGHOST", "").strip()
+    pg_port = os.getenv("PGPORT", "5432").strip() or "5432"
+    pg_db = os.getenv("PGDATABASE", "postgres").strip() or "postgres"
+    pg_user = os.getenv("PGUSER", "postgres").strip() or "postgres"
+    pg_pass = os.getenv("PGPASSWORD", "").strip()
+    if pg_host:
+        user_enc = quote(pg_user, safe="")
+        if pg_pass:
+            pass_enc = quote(pg_pass, safe="")
+            return f"postgresql://{user_enc}:{pass_enc}@{pg_host}:{pg_port}/{pg_db}"
+        return f"postgresql://{user_enc}@{pg_host}:{pg_port}/{pg_db}"
+
+    return ""
 
 
 

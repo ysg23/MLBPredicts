@@ -90,6 +90,15 @@ ALERT_THRESHOLDS_JSON={"*":{"signals":["BET","LEAN"],"min_score":70,"max_rows":5
 - Do **not** set it to publishable/anon key.
 - If your DB password has special chars (e.g. `@`, `:`, `/`, `#`), URL-encode them in the connection string.
 
+### Railway-hosted Postgres/Supabase stack
+
+If you deployed Supabase/Postgres inside Railway (IPv4-friendly), set one of these in MLBPredicts service:
+
+- Preferred: `DATABASE_URL` or `POSTGRES_URL` provided by Railway Postgres service.
+- Also supported: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` (the app can assemble a DSN from these).
+
+Tip: remove old external `SUPABASE_DB_URL` values if they still point to `db.<project-ref>.supabase.co` and are unreachable from Railway.
+
 ### Dashboard
 
 ```bash

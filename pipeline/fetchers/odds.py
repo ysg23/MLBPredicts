@@ -136,12 +136,22 @@ def _mark_best_available_for_fetch(rows: list[dict[str, Any]], fetched_at: str) 
                 FROM market_odds
                 WHERE game_date = ?
                   AND market = ?
-                  AND selection_key IS ?
-                  AND side IS ?
-                  AND line IS ?
+                  AND (selection_key = ? OR (selection_key IS NULL AND ? IS NULL))
+                  AND (side = ? OR (side IS NULL AND ? IS NULL))
+                  AND (line = ? OR (line IS NULL AND ? IS NULL))
                   AND fetched_at = ?
                 """,
-                (game_date, market, selection_key, side, line, fetched_at),
+                (
+                    game_date,
+                    market,
+                    selection_key,
+                    selection_key,
+                    side,
+                    side,
+                    line,
+                    line,
+                    fetched_at,
+                ),
             ).fetchall()
             if not candidates:
                 continue

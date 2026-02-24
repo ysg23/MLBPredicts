@@ -123,20 +123,25 @@ def _match_outcome(score: dict[str, Any]) -> dict[str, Any] | None:
         FROM market_outcomes
         WHERE market = ?
           AND game_id = ?
-          AND player_id IS ?
-          AND team_id IS ?
-          AND side IS ?
-          AND bet_type IS ?
-          AND line IS ?
+          AND (player_id = ? OR (player_id IS NULL AND ? IS NULL))
+          AND (team_id = ? OR (team_id IS NULL AND ? IS NULL))
+          AND (side = ? OR (side IS NULL AND ? IS NULL))
+          AND (bet_type = ? OR (bet_type IS NULL AND ? IS NULL))
+          AND (line = ? OR (line IS NULL AND ? IS NULL))
         LIMIT 1
         """,
         (
             score.get("market"),
             score.get("game_id"),
             score.get("player_id"),
+            score.get("player_id"),
+            score.get("team_id"),
             score.get("team_id"),
             score.get("side"),
+            score.get("side"),
             score.get("bet_type"),
+            score.get("bet_type"),
+            score.get("line"),
             score.get("line"),
         ),
     )
@@ -172,11 +177,11 @@ def _match_open_odds(score: dict[str, Any]) -> dict[str, Any] | None:
         FROM market_odds
         WHERE market = ?
           AND game_id = ?
-          AND player_id IS ?
-          AND team_id IS ?
-          AND side IS ?
-          AND bet_type IS ?
-          AND line IS ?
+          AND (player_id = ? OR (player_id IS NULL AND ? IS NULL))
+          AND (team_id = ? OR (team_id IS NULL AND ? IS NULL))
+          AND (side = ? OR (side IS NULL AND ? IS NULL))
+          AND (bet_type = ? OR (bet_type IS NULL AND ? IS NULL))
+          AND (line = ? OR (line IS NULL AND ? IS NULL))
           AND fetched_at <= ?
         ORDER BY fetched_at DESC, price_decimal DESC
         LIMIT 1
@@ -185,9 +190,14 @@ def _match_open_odds(score: dict[str, Any]) -> dict[str, Any] | None:
             score.get("market"),
             score.get("game_id"),
             score.get("player_id"),
+            score.get("player_id"),
+            score.get("team_id"),
             score.get("team_id"),
             score.get("side"),
+            score.get("side"),
             score.get("bet_type"),
+            score.get("bet_type"),
+            score.get("line"),
             score.get("line"),
             created_at,
         ),
@@ -218,20 +228,25 @@ def _match_closing_odds(score: dict[str, Any]) -> dict[str, Any] | None:
         FROM closing_lines
         WHERE market = ?
           AND game_id = ?
-          AND player_id IS ?
-          AND team_id IS ?
-          AND side IS ?
-          AND bet_type IS ?
-          AND line IS ?
+          AND (player_id = ? OR (player_id IS NULL AND ? IS NULL))
+          AND (team_id = ? OR (team_id IS NULL AND ? IS NULL))
+          AND (side = ? OR (side IS NULL AND ? IS NULL))
+          AND (bet_type = ? OR (bet_type IS NULL AND ? IS NULL))
+          AND (line = ? OR (line IS NULL AND ? IS NULL))
         LIMIT 1
         """,
         (
             score.get("market"),
             score.get("game_id"),
             score.get("player_id"),
+            score.get("player_id"),
+            score.get("team_id"),
             score.get("team_id"),
             score.get("side"),
+            score.get("side"),
             score.get("bet_type"),
+            score.get("bet_type"),
+            score.get("line"),
             score.get("line"),
         ),
     )

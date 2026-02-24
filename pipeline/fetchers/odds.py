@@ -1,112 +1,212 @@
 """
-HR Prop Odds Fetcher.
+Odds fetcher with backward-compatible HR writes and normalized market writes.
 
-Uses The Odds API (free tier: 500 requests/month).
-Pulls HR prop lines from major sportsbooks.
+Outputs:
+1) Legacy `hr_odds` rows for existing HR scoring flow
+2) Normalized `market_odds` rows for the multi-market engine
 """
-import requests
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Any
 
-from config import ODDS_API_KEY, ODDS_API_BASE
-from db.database import upsert_many
+import requests
+
+from config import ODDS_API_BASE, ODDS_API_KEY
+from db.database import insert_many, query
+from utils.odds_normalizer import (
+    SUPPORTED_ODDS_API_MARKETS,
+    american_to_implied_prob,
+    normalize_event_odds,
+)
 
 
-def american_to_implied_prob(odds: int) -> float:
-    """Convert American odds to implied probability."""
-    if odds > 0:
-        return 100 / (odds + 100)
-    else:
-        return abs(odds) / (abs(odds) + 100)
+def _event_game_date(event_payload: dict[str, Any]) -> str:
+    commence = event_payload.get("commence_time")
+    if not commence:
+        return datetime.utcnow().strftime("%Y-%m-%d")
+    normalized = commence.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).strftime("%Y-%m-%d")
+    except ValueError:
+        return datetime.utcnow().strftime("%Y-%m-%d")
 
 
-def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
-    """
-    Fetch HR prop odds from all available sportsbooks.
-    
-    Free tier: 500 requests/month. Each call here = 1 request.
-    Daily usage: ~1-2 calls per day = ~60/month, well within limits.
-    """
-    if not ODDS_API_KEY:
-        print("  ⚠️  No ODDS_API_KEY set — skipping odds fetch")
-        return []
+def _extract_hr_rows(event_payload: dict[str, Any], fetched_at: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    game_date = _event_game_date(event_payload)
+    game_id = None  # retained from legacy flow; game matching happens downstream
 
-    print("\n💰 Fetching HR prop odds...")
-    
-    url = f"{ODDS_API_BASE}/sports/{sport}/events"
-    
-    # First get today's events
-    resp = requests.get(url, params={
-        "apiKey": ODDS_API_KEY,
-        "dateFormat": "iso",
-    }, timeout=15)
-    resp.raise_for_status()
-    events = resp.json()
-    
-    print(f"  📋 Found {len(events)} games with odds")
-    
-    all_odds = []
-    now = datetime.now().isoformat()
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    for event in events:
-        event_id = event["id"]
-        
-        # Fetch player HR props for this event
-        try:
-            props_url = f"{ODDS_API_BASE}/sports/{sport}/events/{event_id}/odds"
-            props_resp = requests.get(props_url, params={
-                "apiKey": ODDS_API_KEY,
-                "regions": "us",
-                "markets": "batter_home_runs",
-                "dateFormat": "iso",
-                "oddsFormat": "american",
-            }, timeout=15)
-            props_resp.raise_for_status()
-            props_data = props_resp.json()
-        except Exception as e:
-            print(f"  ⚠️  Could not fetch props for event {event_id}: {e}")
+    for bookmaker in event_payload.get("bookmakers", []):
+        book_name = bookmaker.get("key")
+        if not book_name:
             continue
 
-        # Parse bookmaker odds
-        for bookmaker in props_data.get("bookmakers", []):
-            book_name = bookmaker["key"]
-            
-            for market in bookmaker.get("markets", []):
-                if market["key"] != "batter_home_runs":
+        for market in bookmaker.get("markets", []):
+            if market.get("key") != "batter_home_runs":
+                continue
+
+            for outcome in market.get("outcomes", []):
+                player_name = outcome.get("description", outcome.get("name", ""))
+                price = outcome.get("price")
+                if price is None:
                     continue
-                    
-                for outcome in market.get("outcomes", []):
-                    player_name = outcome.get("description", outcome.get("name", ""))
-                    price = outcome.get("price", 0)
-                    point = outcome.get("point", 0.5)  # usually 0.5 for HR yes/no
-                    
-                    # Determine if this is over (HR yes) or under (HR no)
-                    is_over = outcome.get("name", "").lower() == "over"
-                    
-                    all_odds.append({
-                        "game_id": None,  # will need to match by teams
-                        "game_date": today,
-                        "player_id": 0,   # will need to match by name
+
+                outcome_name = (outcome.get("name") or "").strip().lower()
+                is_over = outcome_name in {"over", "yes"}
+
+                rows.append(
+                    {
+                        "game_id": game_id,
+                        "game_date": game_date,
+                        "player_id": 0,  # unresolved player mapping; retained for backward compatibility
                         "player_name": player_name,
                         "sportsbook": book_name,
                         "market": "hr",
                         "over_price": price if is_over else None,
                         "under_price": price if not is_over else None,
-                        "implied_prob_over": round(american_to_implied_prob(price), 4) if is_over else None,
-                        "implied_prob_under": round(american_to_implied_prob(price), 4) if not is_over else None,
-                        "fetch_time": now,
-                    })
+                        "implied_prob_over": (
+                            round(american_to_implied_prob(price), 4) if is_over else None
+                        ),
+                        "implied_prob_under": (
+                            round(american_to_implied_prob(price), 4) if not is_over else None
+                        ),
+                        "fetch_time": fetched_at,
+                    }
+                )
+    return rows
 
-    print(f"  ✅ Collected {len(all_odds)} HR prop lines")
-    
-    # Consolidate: group by player + book, merge over/under into single row
-    consolidated = consolidate_odds(all_odds)
-    
+
+def _merge_normalization_summary(total: dict[str, Any], part: dict[str, Any]) -> None:
+    total["total_outcomes"] += part.get("total_outcomes", 0)
+    total["normalized_rows"] += part.get("normalized_rows", 0)
+    total["skipped_unsupported_market"] += part.get("skipped_unsupported_market", 0)
+    total["skipped_invalid_price"] += part.get("skipped_invalid_price", 0)
+    total["skipped_missing_required"] += part.get("skipped_missing_required", 0)
+
+    dst_counts = total["unsupported_market_counts"]
+    src_counts = part.get("unsupported_market_counts", {})
+    for key, value in src_counts.items():
+        dst_counts[key] = dst_counts.get(key, 0) + value
+
+
+def _dedupe_market_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for row in rows:
+        dedupe_key = (
+            row.get("game_id"),
+            row.get("selection_key"),
+            row.get("sportsbook"),
+            row.get("source_market_key"),
+            row.get("fetched_at"),
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        deduped.append(row)
+    return deduped
+
+
+def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
+    """
+    Fetch odds and write both:
+    - backward-compatible HR rows to `hr_odds`
+    - normalized supported-market rows to `market_odds`
+    """
+    if not ODDS_API_KEY:
+        print("  ⚠️  No ODDS_API_KEY set — skipping odds fetch")
+        return []
+
+    print("\n💰 Fetching odds (HR + normalized markets)...")
+
+    events_url = f"{ODDS_API_BASE}/sports/{sport}/events"
+    events_resp = requests.get(
+        events_url,
+        params={
+            "apiKey": ODDS_API_KEY,
+            "dateFormat": "iso",
+        },
+        timeout=15,
+    )
+    events_resp.raise_for_status()
+    events = events_resp.json()
+
+    print(f"  📋 Found {len(events)} games with odds")
+
+    markets_param = ",".join(SUPPORTED_ODDS_API_MARKETS)
+    fetched_at = datetime.utcnow().isoformat()
+    all_hr_rows: list[dict[str, Any]] = []
+    all_normalized_rows: list[dict[str, Any]] = []
+    normalization_summary: dict[str, Any] = {
+        "total_outcomes": 0,
+        "normalized_rows": 0,
+        "skipped_unsupported_market": 0,
+        "skipped_invalid_price": 0,
+        "skipped_missing_required": 0,
+        "unsupported_market_counts": {},
+    }
+
+    for event in events:
+        event_id = event.get("id")
+        if not event_id:
+            continue
+
+        try:
+            odds_url = f"{ODDS_API_BASE}/sports/{sport}/events/{event_id}/odds"
+            odds_resp = requests.get(
+                odds_url,
+                params={
+                    "apiKey": ODDS_API_KEY,
+                    "regions": "us",
+                    "markets": markets_param,
+                    "dateFormat": "iso",
+                    "oddsFormat": "american",
+                },
+                timeout=15,
+            )
+            odds_resp.raise_for_status()
+            event_odds = odds_resp.json()
+        except Exception as exc:
+            print(f"  ⚠️  Could not fetch odds for event {event_id}: {exc}")
+            continue
+
+        normalized_rows, summary = normalize_event_odds(event_odds, fetched_at=fetched_at)
+        all_normalized_rows.extend(normalized_rows)
+        _merge_normalization_summary(normalization_summary, summary)
+
+        all_hr_rows.extend(_extract_hr_rows(event_odds, fetched_at=fetched_at))
+
+    print(f"  ✅ Collected {len(all_hr_rows)} raw HR prop lines")
+    consolidated = consolidate_odds(all_hr_rows)
+
     if consolidated:
-        count = upsert_many("hr_odds", consolidated, 
-                           ["game_date", "player_name", "sportsbook", "fetch_time"])
-        print(f"  💾 Saved {len(consolidated)} consolidated odds rows")
-    
+        inserted = insert_many("hr_odds", consolidated)
+        print(f"  💾 Saved {inserted} consolidated HR rows to hr_odds")
+
+    deduped_normalized = _dedupe_market_rows(all_normalized_rows)
+    if deduped_normalized:
+        inserted = insert_many("market_odds", deduped_normalized)
+        print(
+            f"  💾 Saved {inserted} normalized rows to market_odds "
+            f"({len(deduped_normalized)} attempted)"
+        )
+
+    unsupported_counts = normalization_summary["unsupported_market_counts"]
+    if unsupported_counts:
+        pairs = sorted(unsupported_counts.items(), key=lambda kv: kv[1], reverse=True)
+        top = ", ".join(f"{k}:{v}" for k, v in pairs[:5])
+        print(f"  ℹ️  Unsupported market outcomes skipped: {top}")
+
+    print(
+        "  📊 Normalization summary: "
+        f"outcomes={normalization_summary['total_outcomes']}, "
+        f"normalized={normalization_summary['normalized_rows']}, "
+        f"unsupported={normalization_summary['skipped_unsupported_market']}, "
+        f"bad_price={normalization_summary['skipped_invalid_price']}, "
+        f"missing_required={normalization_summary['skipped_missing_required']}"
+    )
+
     return consolidated
 
 
@@ -136,8 +236,6 @@ def get_best_odds(player_name: str, game_date: str) -> dict:
     Find the best available HR Yes odds across all books for a player.
     Returns the best line and which book has it.
     """
-    from db.database import query
-    
     results = query("""
         SELECT sportsbook, over_price, implied_prob_over
         FROM hr_odds

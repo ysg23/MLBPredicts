@@ -4,7 +4,7 @@ Closing line value (CLV) capture and bet update helpers.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from db.database import get_connection, query
@@ -147,7 +147,7 @@ def capture_closing_lines_for_date(game_date: str) -> dict[str, int]:
     if not groups:
         return {"groups": 0, "upserted": 0}
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     rows_to_upsert: list[dict[str, Any]] = []
     for group in groups:
         latest_rows = _latest_rows_per_book(group)

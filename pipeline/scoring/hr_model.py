@@ -7,7 +7,7 @@ Uses:
 - pitcher_stats (window 14)
 - weather
 - park factors
-- hr_odds (best available odds per player)
+- market_odds (best available odds per player, market='HR')
 """
 
 from __future__ import annotations
@@ -19,7 +19,13 @@ import numpy as np
 
 from config import HR_FACTOR_WEIGHTS, SIGNAL_THRESHOLDS
 from db.database import query
-from .base_engine import GameContext, get_best_hr_odds, percentile_rank
+from .base_engine import (
+    GameContext,
+    choose_best_odds_row,
+    get_market_odds_rows,
+    implied_prob_from_american,
+    percentile_rank,
+)
 
 
 MARKET = "HR"
@@ -90,25 +96,54 @@ def _signal(score: float, edge: float | None) -> str:
     return "SKIP"
 
 
+def _get_player_name(player_id: int) -> str | None:
+    rows = query(
+        "SELECT player_name FROM batter_stats WHERE player_id=? LIMIT 1",
+        (player_id,),
+    )
+    return rows[0]["player_name"] if rows else None
+
+
+def _determine_opposing_pitcher(game: GameContext, batter_team: str | None):
+    """Return (pitcher_id, pitcher_name, pitcher_hand) for the opposing pitcher."""
+    if batter_team is None:
+        return None, None, None
+    if batter_team == game.home_team:
+        return game.away_pitcher_id, game.away_pitcher_name, game.away_pitcher_hand
+    if batter_team == game.away_team:
+        return game.home_pitcher_id, game.home_pitcher_name, game.home_pitcher_hand
+    return None, None, None
+
+
 def score_game(game: GameContext, weather: dict | None, park_factor: float, season: int) -> list[dict]:
     """
-    Score all HR-prop players for this game based on hr_odds rows.
+    Score all HR-prop players for this game based on market_odds rows.
     """
-    # HR props define the "player universe" for this game/date
-    players = query(
-        """
-        SELECT DISTINCT player_id, player_name
-        FROM hr_odds
-        WHERE game_id=? AND game_date=?
-        """,
-        (game.game_id, game.game_date),
+    # Build player universe from market_odds (HR market for this game)
+    odds_rows = get_market_odds_rows(
+        game_date=game.game_date, market="HR", game_id=game.game_id,
     )
-    if not players:
+    if not odds_rows:
+        return []
+
+    # Deduplicate to unique players
+    player_info: dict[int, dict[str, Any]] = {}
+    for row in odds_rows:
+        pid = row.get("player_id")
+        if pid is None:
+            continue
+        pid = int(pid)
+        if pid not in player_info:
+            player_info[pid] = {
+                "team_abbr": row.get("team_abbr") or row.get("team_id"),
+                "opponent_team_abbr": row.get("opponent_team_abbr") or row.get("opponent_team_id"),
+            }
+
+    if not player_info:
         return []
 
     # Preload distributions for percentile ranks
     barrel_vals = _all_batter_values(game.game_date, 14, "barrel_pct")
-    iso_vals = _all_batter_values(game.game_date, 14, "iso_power")
     pitcher_hr9_vals = _all_pitcher_values(game.game_date, 14, "hr_per_9")
     pitcher_barrel_vals = _all_pitcher_values(game.game_date, 14, "barrel_pct_against")
 
@@ -124,9 +159,9 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
     park_weather_score = _scale_between(park_weather_mult, 0.85, 1.20)
 
     results: list[dict] = []
-    for p in players:
-        pid = int(p["player_id"])
-        pname = p["player_name"]
+    for pid, info in player_info.items():
+        pname = _get_player_name(pid) or f"Player {pid}"
+        batter_team = info["team_abbr"]
 
         batter14 = _get_batter_stat(pid, game.game_date, 14)
         batter7 = _get_batter_stat(pid, game.game_date, 7)
@@ -134,26 +169,20 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
         if not batter14:
             continue
 
-        # Determine opposing pitcher based on team
-        # We don't have batter team reliably; use odds table only has name.
-        # Fallback: score against both pitchers? We'll use both and take worse matchup (conservative).
-        opp_pitchers = []
-        if game.home_pitcher_id:
-            opp_pitchers.append(("home", game.home_pitcher_id, game.home_pitcher_name, game.home_pitcher_hand))
-        if game.away_pitcher_id:
-            opp_pitchers.append(("away", game.away_pitcher_id, game.away_pitcher_name, game.away_pitcher_hand))
+        # Determine the actual opposing pitcher using team info from market_odds
+        opp_pid, opp_name, opp_hand = _determine_opposing_pitcher(game, batter_team)
 
         matchup_scores = []
         pitcher_vuln_scores = []
-        for _, opp_id, _, opp_hand in opp_pitchers:
-            pit14 = _get_pitcher_stat(opp_id, game.game_date, 14)
+
+        if opp_pid is not None:
+            pit14 = _get_pitcher_stat(opp_pid, game.game_date, 14)
             # matchup: batter ISO split vs pitcher hand + pitcher HR/9
             iso_split = None
             if opp_hand == "L":
                 iso_split = batter14.get("iso_vs_lhp")
             elif opp_hand == "R":
                 iso_split = batter14.get("iso_vs_rhp")
-            # normalize iso_split ~ 0.120 poor to 0.280 elite
             iso_component = _scale_between(float(iso_split) if iso_split is not None else None, 0.10, 0.30)
             if pit14 and pit14.get("hr_per_9") is not None:
                 hr9_pr = percentile_rank(pitcher_hr9_vals, float(pit14["hr_per_9"]))
@@ -170,6 +199,10 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
                 pitcher_vuln_scores.append(0.6 * hr9_s + 0.4 * brl_s)
             else:
                 pitcher_vuln_scores.append(50.0)
+        else:
+            # No opposing pitcher identified; use neutral defaults
+            matchup_scores.append(50.0)
+            pitcher_vuln_scores.append(50.0)
 
         matchup_score = float(np.mean(matchup_scores)) if matchup_scores else 50.0
         pitcher_vuln_score = float(np.mean(pitcher_vuln_scores)) if pitcher_vuln_scores else 50.0
@@ -196,9 +229,24 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
         for k, w in HR_FACTOR_WEIGHTS.items():
             composite += factors.get(k, 50.0) * float(w)
 
-        # odds + edge
-        odds = get_best_hr_odds(game.game_id, pid)
-        book_prob = float(odds["implied_prob"]) if odds and odds.get("implied_prob") is not None else None
+        # Best available odds from market_odds
+        player_odds_rows = get_market_odds_rows(
+            game_date=game.game_date, market="HR", game_id=game.game_id, player_id=pid,
+        )
+        best_odds = choose_best_odds_row(player_odds_rows)
+        book_prob = None
+        odds_detail = None
+        if best_odds:
+            book_prob = (
+                float(best_odds["implied_probability"])
+                if best_odds.get("implied_probability") is not None
+                else implied_prob_from_american(best_odds.get("price_american"))
+            )
+            odds_detail = {
+                "sportsbook": best_odds.get("sportsbook"),
+                "price_american": best_odds.get("price_american"),
+                "price_decimal": best_odds.get("price_decimal"),
+            }
 
         # model probability: map 0-100 score to 0.02-0.35 (rough HR range)
         model_prob = 0.02 + (composite / 100.0) * 0.33
@@ -212,8 +260,8 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
                 "game_date": game.game_date,
                 "player_id": pid,
                 "player_name": pname,
-                "team_abbr": None,
-                "opponent_team_abbr": None,
+                "team_abbr": batter_team,
+                "opponent_team_abbr": info["opponent_team_abbr"],
                 "bet_type": BET_TYPE_DEFAULT,
                 "line": None,
                 "model_score": float(round(composite, 2)),
@@ -222,7 +270,11 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
                 "book_implied_prob": float(round(book_prob, 4)) if book_prob is not None else None,
                 "edge": float(round(edge, 4)) if edge is not None else None,
                 "signal": sig,
-                "factors_json": json.dumps({**factors, "odds": odds, "park_weather_mult": park_weather_mult}),
+                "factors_json": json.dumps({
+                    **factors,
+                    "odds": odds_detail,
+                    "park_weather_mult": park_weather_mult,
+                }),
             }
         )
 

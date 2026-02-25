@@ -7,7 +7,7 @@ Outputs:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -25,12 +25,12 @@ from utils.odds_normalizer import (
 def _event_game_date(event_payload: dict[str, Any]) -> str:
     commence = event_payload.get("commence_time")
     if not commence:
-        return datetime.utcnow().strftime("%Y-%m-%d")
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
     normalized = commence.replace("Z", "+00:00")
     try:
         return datetime.fromisoformat(normalized).strftime("%Y-%m-%d")
     except ValueError:
-        return datetime.utcnow().strftime("%Y-%m-%d")
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _extract_hr_rows(event_payload: dict[str, Any], fetched_at: str) -> list[dict[str, Any]]:
@@ -200,7 +200,7 @@ def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
     print(f"  📋 Found {len(events)} games with odds")
 
     markets_param = ",".join(SUPPORTED_ODDS_API_MARKETS)
-    fetched_at = datetime.utcnow().isoformat()
+    fetched_at = datetime.now(timezone.utc).isoformat()
     all_hr_rows: list[dict[str, Any]] = []
     all_normalized_rows: list[dict[str, Any]] = []
     normalization_summary: dict[str, Any] = {

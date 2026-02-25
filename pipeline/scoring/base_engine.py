@@ -28,6 +28,8 @@ class GameContext:
     away_pitcher_name: Optional[str]
     stadium_id: Optional[int]
     game_time: Optional[str] = None
+    home_pitcher_hand: Optional[str] = None
+    away_pitcher_hand: Optional[str] = None
 
 
 def clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -312,7 +314,7 @@ def load_today_games(game_date: str) -> list[GameContext]:
     games = query(
         """
         SELECT game_id, game_date, game_time, home_team, away_team, home_pitcher_id, home_pitcher_name,
-               away_pitcher_id, away_pitcher_name, stadium_id
+               away_pitcher_id, away_pitcher_name, stadium_id, home_pitcher_hand, away_pitcher_hand
         FROM games
         WHERE game_date=?
         """,
@@ -330,6 +332,8 @@ def load_today_games(game_date: str) -> list[GameContext]:
             away_pitcher_id=g.get("away_pitcher_id"),
             away_pitcher_name=g.get("away_pitcher_name"),
             stadium_id=g.get("stadium_id"),
+            home_pitcher_hand=g.get("home_pitcher_hand"),
+            away_pitcher_hand=g.get("away_pitcher_hand"),
         )
         for g in games
     ]

@@ -5,7 +5,7 @@ Stores normalized plate-ump assignments for each game/date snapshot.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -15,7 +15,7 @@ from db.database import get_connection, insert_many
 
 
 def _today_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _normalize_umpire_name(name: str | None) -> str | None:
@@ -79,7 +79,7 @@ def fetch_umpires_for_date(date_str: str | None = None) -> dict[str, Any]:
     Fetch plate ump assignments for target date and store snapshots.
     """
     game_date = date_str or _today_str()
-    fetched_at = datetime.utcnow().isoformat()
+    fetched_at = datetime.now(timezone.utc).isoformat()
     _ensure_umpire_assignments_table()
 
     print(f"\n👨‍⚖️ Fetching umpire assignments for {game_date}...")

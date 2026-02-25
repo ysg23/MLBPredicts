@@ -1,7 +1,7 @@
 """Minimal API service for Railway health checks and lightweight status endpoints."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 
@@ -12,7 +12,7 @@ app = FastAPI(title="MLBPredicts API", version="0.1.0")
 def health() -> dict:
     # Keep this endpoint dependency-free so Railway healthchecks stay green
     # even when optional integrations/config are unavailable.
-    return {"ok": True, "status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    return {"ok": True, "status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/status")

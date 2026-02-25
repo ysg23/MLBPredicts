@@ -5,7 +5,7 @@ Stores lineup snapshots in `lineups` with active/inactive versioning.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -15,7 +15,7 @@ from db.database import get_connection, query
 
 
 def _today_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _team_abbr(team_name: str | None) -> str | None:
@@ -196,7 +196,7 @@ def fetch_lineups_for_date(date_str: str | None = None) -> dict[str, Any]:
     Fetch lineup snapshots and return changed game/team entries.
     """
     game_date = date_str or _today_str()
-    fetched_at = datetime.utcnow().isoformat()
+    fetched_at = datetime.now(timezone.utc).isoformat()
     print(f"\n🧾 Fetching lineups for {game_date}...")
 
     games = _fetch_schedule(game_date)

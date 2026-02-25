@@ -115,6 +115,8 @@ def _project_ks(
     chase_14 = _to_float(pitcher_features.get("chase_pct_14"))
     role = _to_float(pitcher_features.get("starter_role_confidence"))
     bf14 = _to_float(pitcher_features.get("batters_faced_14"))
+    tto_k_decay = _to_float(pitcher_features.get("tto_k_decay_pct"))
+    tto_endurance = _to_float(pitcher_features.get("tto_endurance_score"))
 
     if k_pct_14 is None:
         missing_inputs.append("pitcher_k_pct_14")
@@ -129,10 +131,24 @@ def _project_ks(
 
     ump_boost = _to_float((context or {}).get("umpire_k_boost")) or 0.0
     weather_temp = _to_float((context or {}).get("weather_temp_f"))
+    is_day_game = (context or {}).get("is_day_game")
     weather_adj = 0.0
     if weather_temp is not None:
         # cooler games slightly improve strikeout environment.
         weather_adj = (68.0 - weather_temp) * 0.015
+
+    # Day games historically have slightly lower K rates (better visibility)
+    day_night_adj = 0.0
+    if is_day_game == 1:
+        day_night_adj = -0.008  # ~0.8% lower K rate in day games
+    elif is_day_game == 0:
+        day_night_adj = 0.003
+
+    # TTO adjustment: pitchers with high K decay lose effectiveness deeper into games
+    tto_adj = 0.0
+    if tto_k_decay is not None:
+        # League avg is 18% decay. Better than avg = positive K projection adj
+        tto_adj = (18.0 - tto_k_decay) * 0.001  # low decay = more Ks sustained
 
     # Expected batters faced proxy. If missing, use a neutral starter volume.
     expected_bf = (bf14 / 3.0) if bf14 is not None else 24.0
@@ -146,8 +162,20 @@ def _project_ks(
     whiff_adj = ((whiff_14 - 24.0) / 100.0) if whiff_14 is not None else 0.0
     ump_adj = ump_boost / 100.0
 
-    effective_k_rate = max(0.12, min(0.45, k_rate + (0.35 * opp_adj) + (0.2 * whiff_adj) + (0.1 * chase_adj) + ump_adj + weather_adj))
+    effective_k_rate = max(0.12, min(0.45, k_rate + (0.35 * opp_adj) + (0.2 * whiff_adj) + (0.1 * chase_adj) + ump_adj + weather_adj + day_night_adj + tto_adj))
     projection = max(1.5, min(12.5, effective_k_rate * expected_bf))
+
+    # TTO endurance score: high endurance = pitcher sustains Ks deeper
+    tto_score = 50.0
+    if tto_endurance is not None:
+        tto_score = float(tto_endurance)
+
+    # Day/night context score contribution
+    day_night_score = 50.0
+    if is_day_game == 0:
+        day_night_score = 55.0  # slight K boost for night games
+    elif is_day_game == 1:
+        day_night_score = 42.0  # slight K suppression for day games
 
     factors = {
         "k_form_score": 50.0 + ((k_pct_14 or 22.0) - 22.0) * 3.0,
@@ -155,6 +183,8 @@ def _project_ks(
         "whiff_chase_score": 50.0 + (((whiff_14 or 24.0) - 24.0) * 2.0) + (((chase_14 or 30.0) - 30.0) * 1.3),
         "role_score": (expected_role * 100.0),
         "context_score": 50.0 + (ump_boost * 2.0) + (weather_adj * 50.0),
+        "tto_endurance_score": tto_score,
+        "day_night_score": day_night_score,
     }
     factors = {k: max(0.0, min(100.0, float(v))) for k, v in factors.items()}
 
@@ -209,11 +239,13 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
         k_form_pct = percentile_score(league_k_values, _to_float(pitcher_features.get("k_pct_14")))
         whiff_pct = percentile_score(league_whiff_values, _to_float(pitcher_features.get("whiff_pct_14")))
         base_score = (
-            0.35 * k_form_pct
-            + 0.20 * factors["opponent_k_score"]
-            + 0.20 * whiff_pct
-            + 0.15 * factors["role_score"]
-            + 0.10 * factors["context_score"]
+            0.30 * k_form_pct
+            + 0.18 * factors["opponent_k_score"]
+            + 0.18 * whiff_pct
+            + 0.12 * factors["role_score"]
+            + 0.08 * factors["context_score"]
+            + 0.08 * factors["tto_endurance_score"]
+            + 0.06 * factors["day_night_score"]
         )
         edge_component = 0.0
         if edge_pct is not None:

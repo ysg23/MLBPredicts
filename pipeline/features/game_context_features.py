@@ -41,13 +41,57 @@ def _games_for_date(game_dt: date) -> list[dict[str, Any]]:
     return query(
         """
         SELECT game_id, home_team, away_team, stadium_id,
-               home_pitcher_id, away_pitcher_id, umpire_name
+               home_pitcher_id, away_pitcher_id, umpire_name, game_time
         FROM games
         WHERE game_date = ?
         ORDER BY game_id
         """,
         (game_dt.strftime("%Y-%m-%d"),),
     )
+
+
+def _classify_day_night(game_time: str | None) -> tuple[int | None, str | None]:
+    """Classify game as day or night based on game_time field.
+
+    Day games: start before 17:00 (5 PM) ET.
+    Night games: start at 17:00 or later.
+
+    Returns (is_day_game, game_time_et).
+    """
+    if not game_time:
+        return None, None
+
+    raw = str(game_time).strip()
+    game_time_et = raw
+
+    # Try parsing common formats from MLB Stats API
+    hour = None
+    for fmt in ("%H:%M", "%I:%M %p", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            hour = parsed.hour
+            game_time_et = parsed.strftime("%H:%M")
+            break
+        except ValueError:
+            continue
+
+    # Fallback: try to extract hour from string like "19:10" or "1:05 PM"
+    if hour is None:
+        import re
+        match = re.search(r"(\d{1,2}):(\d{2})", raw)
+        if match:
+            h = int(match.group(1))
+            if "PM" in raw.upper() and h != 12:
+                h += 12
+            elif "AM" in raw.upper() and h == 12:
+                h = 0
+            hour = h
+
+    if hour is None:
+        return None, game_time_et
+
+    is_day = 1 if hour < 17 else 0
+    return is_day, game_time_et
 
 
 def _latest_weather(game_id: int) -> dict[str, Any] | None:
@@ -184,6 +228,7 @@ def build_game_context_features(game_date: date | str) -> dict[str, Any]:
         home_pitcher_id = game.get("home_pitcher_id")
         away_pitcher_id = game.get("away_pitcher_id")
         umpire_name = game.get("umpire_name")
+        game_time = game.get("game_time")
 
         park_hr, park_runs, park_hits = _park_factors(game.get("stadium_id"), season=season)
         weather_row = _latest_weather(game_id)
@@ -196,6 +241,9 @@ def build_game_context_features(game_date: date | str) -> dict[str, Any]:
 
         lineups_confirmed_home = _lineup_confirmed(game_dt, game_id, home_team_id)
         lineups_confirmed_away = _lineup_confirmed(game_dt, game_id, away_team_id)
+
+        # Day/night classification from game start time
+        is_day_game, game_time_et = _classify_day_night(game_time)
 
         has_probable_pitchers = home_pitcher_id is not None and away_pitcher_id is not None
         has_weather = weather_row is not None
@@ -235,6 +283,8 @@ def build_game_context_features(game_date: date | str) -> dict[str, Any]:
                 "lineups_confirmed_home": 1 if lineups_confirmed_home else 0,
                 "lineups_confirmed_away": 1 if lineups_confirmed_away else 0,
                 "is_final_context": 1 if is_final_context else 0,
+                "is_day_game": is_day_game,
+                "game_time_et": game_time_et,
             }
         )
 

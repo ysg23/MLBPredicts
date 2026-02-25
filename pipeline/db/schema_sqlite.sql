@@ -249,6 +249,7 @@ CREATE TABLE IF NOT EXISTS batter_daily_features (
     k_pct_vs_lhp REAL, k_pct_vs_rhp REAL,
     hot_cold_delta_iso REAL,
     hot_cold_delta_hit_rate REAL,
+    recent_lineup_slot INTEGER,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(game_date, player_id)
@@ -285,6 +286,9 @@ CREATE TABLE IF NOT EXISTS pitcher_daily_features (
     split_k_pct_vs_rhh REAL,
     split_hr_allowed_rate_vs_lhh REAL,
     split_hr_allowed_rate_vs_rhh REAL,
+    tto_k_decay_pct REAL,
+    tto_hr_increase_pct REAL,
+    tto_endurance_score REAL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(game_date, pitcher_id)
@@ -335,6 +339,8 @@ CREATE TABLE IF NOT EXISTS game_context_features (
     lineups_confirmed_home INTEGER NOT NULL DEFAULT 0 CHECK(lineups_confirmed_home IN (0, 1)),
     lineups_confirmed_away INTEGER NOT NULL DEFAULT 0 CHECK(lineups_confirmed_away IN (0, 1)),
     is_final_context INTEGER NOT NULL DEFAULT 0 CHECK(is_final_context IN (0, 1)),
+    is_day_game INTEGER,
+    game_time_et TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(game_date, game_id)

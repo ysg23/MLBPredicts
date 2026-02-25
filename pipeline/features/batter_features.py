@@ -107,6 +107,27 @@ def _query_recent_team_batters(game_dt: date, seasons_back: int) -> dict[int, st
     return {int(r["player_id"]): r.get("team") for r in rows}
 
 
+def _query_recent_lineup_slot(player_id: int, game_dt: date) -> int | None:
+    """Get the player's most common batting order position from recent lineups."""
+    rows = query(
+        """
+        SELECT batting_order, COUNT(*) as cnt
+        FROM lineups
+        WHERE player_id = ?
+          AND game_date < ?
+          AND batting_order IS NOT NULL
+          AND COALESCE(active_version, 1) = 1
+        GROUP BY batting_order
+        ORDER BY cnt DESC
+        LIMIT 1
+        """,
+        (player_id, game_dt.strftime("%Y-%m-%d")),
+    )
+    if rows and rows[0].get("batting_order") is not None:
+        return int(rows[0]["batting_order"])
+    return None
+
+
 def _relevant_batter_pool(game_dt: date, seasons_back: int) -> tuple[dict[int, str | None], dict[str, int]]:
     lineup = _query_distinct_lineup_batters(game_dt)
     odds = _query_distinct_odds_batters(game_dt)
@@ -318,6 +339,7 @@ def _build_row(
             if hit_rate_7 is not None and hit_rate_30 is not None
             else None
         ),
+        "recent_lineup_slot": _query_recent_lineup_slot(player_id, game_dt),
     }
 
 

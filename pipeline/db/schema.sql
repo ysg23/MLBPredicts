@@ -606,6 +606,7 @@ CREATE TABLE IF NOT EXISTS model_scores (
     edge DOUBLE PRECISION,
     signal TEXT CHECK(signal IN ('BET', 'LEAN', 'SKIP', 'FADE')),
     confidence_band TEXT CHECK(confidence_band IN ('HIGH', 'MEDIUM', 'LOW')),
+    visibility_tier TEXT DEFAULT 'FREE',
     factors_json TEXT,
     reasons_json TEXT,
     risk_flags_json TEXT,

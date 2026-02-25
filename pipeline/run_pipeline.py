@@ -190,9 +190,11 @@ def run_test():
             print("  No games found (off day or offseason)")
         
         print("\n✅ API connection works!")
+        return True
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
-        print("  Check your internet connection and try again")
+        print("  Check your internet/proxy configuration and try again")
+        return False
 
 
 
@@ -251,7 +253,7 @@ if __name__ == "__main__":
     elif args.status:
         run_status()
     elif args.test:
-        run_test()
+        sys.exit(0 if run_test() else 1)
     else:
         parser.print_help()
         print("\n💡 Start with: python run_pipeline.py --init")

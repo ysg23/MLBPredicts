@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MLBPredicts Dashboard (Phase 8A-8C)</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, Arial, sans-serif; }
+      body { margin: 0; background: #0f1218; color: #e8edf7; }
+      .container { max-width: 1260px; margin: 0 auto; padding: 16px; }
+      .nav, .filters, .grid { display: grid; gap: 8px; }
+      .nav { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 12px; }
+      .filters { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 12px; }
+      .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 12px; }
+      .card { background: #141a24; border: 1px solid #2f3643; border-radius: 8px; padding: 10px; }
+      input, select, button { background: #171c25; color: #e8edf7; border: 1px solid #2f3643; padding: 8px; border-radius: 6px; }
+      button { cursor: pointer; }
+      button.active { border-color: #4c7eff; background: #1b2742; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border-bottom: 1px solid #2f3643; padding: 10px; vertical-align: top; }
+      .muted { color: #9ca6ba; font-size: 12px; }
+      .msg { background: #12311e; border: 1px solid #2f7a4e; padding: 8px; border-radius: 6px; }
+      .warn { background: #342911; border: 1px solid #8a6c26; padding: 8px; border-radius: 6px; }
+      .hidden { display: none; }
+      .tag { display:inline-block; border:1px solid #34405b; border-radius: 999px; padding: 2px 8px; margin:2px; font-size:12px; }
+      .bar-wrap { background: #111722; border-radius: 4px; height: 8px; overflow: hidden; margin: 4px 0 8px; }
+      .bar { background: linear-gradient(90deg, #4c7eff, #50c6ff); height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>MLBPredicts Dashboard</h1>
+      <div class="nav">
+        <button class="tab active" data-tab="explorer">Market Explorer</button>
+        <button class="tab" data-tab="performance">Performance</button>
+        <button class="tab" data-tab="health">Model Health</button>
+        <button class="tab" data-tab="clv">CLV / Line Movement</button>
+        <button class="tab" data-tab="bankroll">Bankroll / Bet Log</button>
+      </div>
+
+      <div id="alertsPanel" class="warn">Alerts: lineup posted · edge crossed threshold · odds moved</div>
+
+      <section id="explorer" class="page">
+        <div class="filters">
+          <input id="date" type="date" value="2026-03-27" />
+          <select id="market"></select>
+          <select id="signal"><option>ALL</option><option>BET</option><option>LEAN</option><option>FADE</option></select>
+          <select id="book"><option>ALL</option></select>
+          <select id="confidence"><option>ALL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>
+          <label>Min Edge % <input id="edge" type="number" min="0" max="100" value="0" /></label>
+          <label><input id="lineup" type="checkbox" /> Lineup confirmed only</label>
+          <label><input id="showAdvanced" type="checkbox" checked /> Show advanced metrics</label>
+        </div>
+        <p id="message" class="msg hidden"></p>
+        <div id="exposureWarnings" class="warn hidden"></div>
+        <table>
+          <thead><tr><th>Pick</th><th>Market</th><th>Odds</th><th>Model</th><th>Implied</th><th>Edge</th><th>Signal</th><th>Flags</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </section>
+
+      <section id="performance" class="page hidden">
+        <div class="grid" id="perfCards"></div>
+        <h3>Signal Breakdown</h3>
+        <table><thead><tr><th>Signal</th><th>Bets</th><th>Win %</th><th>ROI</th></tr></thead><tbody id="signalRows"></tbody></table>
+        <h3>Score Bucket Results</h3>
+        <table><thead><tr><th>Bucket</th><th>Bets</th><th>ROI</th></tr></thead><tbody id="bucketRows"></tbody></table>
+      </section>
+
+      <section id="health" class="page hidden">
+        <div class="grid" id="healthCards"></div>
+        <h3>Calibration</h3>
+        <table><thead><tr><th>Pred Bucket</th><th>Expected</th><th>Actual</th></tr></thead><tbody id="calRows"></tbody></table>
+        <h3>Factor Diagnostics</h3>
+        <div id="factorDiag"></div>
+      </section>
+
+      <section id="clv" class="page hidden">
+        <div class="grid" id="clvCards"></div>
+        <h3>CLV by Market/Book</h3>
+        <table><thead><tr><th>Market</th><th>Book</th><th>Avg CLV</th><th>Bets</th></tr></thead><tbody id="clvRows"></tbody></table>
+      </section>
+
+      <section id="bankroll" class="page hidden">
+        <div class="grid" id="bankrollCards"></div>
+        <table><thead><tr><th>Date</th><th>Market</th><th>Pick</th><th>Odds</th><th>Units</th><th>Result</th><th>Profit</th></tr></thead><tbody id="betRows"></tbody></table>
+      </section>
+    </div>
+
+    <script>
+      const APP_CONFIG = {
+        featureFlags: {
+          showAdvanced: true,
+          showCLV: true,
+          showReasons: true,
+          showFactorDetail: true,
+        }
+      };
+
+      const markets = ["HR","K","HITS_1P","HITS_LINE","TB_LINE","OUTS_RECORDED","ML","TOTAL","F5_ML","F5_TOTAL","TEAM_TOTAL"];
+      const picks = [
+        {id:1,game_date:"2026-03-27",market:"HR",sportsbook:"DraftKings",game_time:"19:10 ET",matchup:"NYY @ BOS",team:"NYY",player:"Aaron Judge",side:"Over",line:0.5,odds:'+260',model_probability:0.29,implied_probability:0.22,edge_pct:0.07,model_score:82,signal:"BET",confidence_band:"HIGH",lineup_confirmed:true,weather_flag:"OK",visibility_tier:"FREE",reasons:["Barrel trend up 14d","Favorable pull-side wind"],risk:["High-variance market"],context:"62°F, 8mph out to LF; batting order 2",factors:{power:92,park:70,pitcher_vuln:81,recent_form:75}},
+        {id:2,game_date:"2026-03-27",market:"K",sportsbook:"FanDuel",game_time:"20:05 ET",matchup:"SEA @ HOU",team:"SEA",player:"Luis Castillo",side:"Over",line:6.5,odds:'-108',model_probability:0.58,implied_probability:0.52,edge_pct:0.06,model_score:76,signal:"BET",confidence_band:"MEDIUM",lineup_confirmed:false,weather_flag:"DOME",visibility_tier:"PRO",reasons:["Opponent top-5 K% vs RHP","Pitch count trend stable"],risk:["Lineup not confirmed"],context:"Retractable roof",factors:{whiff:88,chase:81,pitch_count:72,matchup:70}},
+        {id:3,game_date:"2026-03-27",market:"ML",sportsbook:"DraftKings",game_time:"19:40 ET",matchup:"LAD @ SF",team:"LAD",player:"LAD",side:"AWAY",line:null,odds:'-124',model_probability:0.60,implied_probability:0.55,edge_pct:0.05,model_score:74,signal:"LEAN",confidence_band:"MEDIUM",lineup_confirmed:true,weather_flag:"OK",visibility_tier:"FREE",reasons:["Bullpen edge","Starter form"],risk:["Road favorite variance"],context:"Marine layer",factors:{starting_pitch:80,bullpen:84,offense:71}}
+      ];
+
+      const performance = { roi: 8.4, winRate: 56.2, units: 42.1, bets: 318,
+        signal: [{name:'BET',bets:134,win:58.2,roi:11.3},{name:'LEAN',bets:144,win:54.1,roi:5.2},{name:'FADE',bets:40,win:52.0,roi:2.1}],
+        buckets: [{label:'80-89',bets:52,roi:14.0},{label:'70-79',bets:101,roi:7.8},{label:'60-69',bets:132,roi:3.4}] };
+      const health = { stale_sources:['weather > 90m old'], missing_sources:['umpire feed intermittent'], calibration:[['0.55-0.60',57,55],['0.60-0.65',62,61],['0.65-0.70',67,65]], factors:[['power',0.32],['matchup',0.24],['park',0.19],['lineup',0.14]] };
+      const clv = { avg:0.014, by:[['HR','DraftKings',0.021,72],['K','FanDuel',0.009,65],['ML','DraftKings',0.012,54]] };
+      const bankroll = { current: 642.4, peak: 688.1, drawdown: -8.6, streak: 'W3', bets:[['2026-03-26','HR','Judge O0.5','+260',1,'win',2.6],['2026-03-26','K','Castillo O6.5','-108',1,'loss',-1.0],['2026-03-25','ML','LAD ML','-124',1.2,'win',0.97]] };
+
+      const marketSel = document.getElementById('market');
+      markets.forEach((m) => marketSel.add(new Option(m,m)));
+      const uniqueBooks = [...new Set(picks.map((r)=>r.sportsbook))];
+      uniqueBooks.forEach((b)=>document.getElementById('book').add(new Option(b,b)));
+
+      const favorites = JSON.parse(localStorage.getItem('favoriteMarkets') || '[]');
+      const saved = JSON.parse(localStorage.getItem('savedFilters') || '{}');
+      if(saved.market) marketSel.value = saved.market;
+      if(saved.signal) document.getElementById('signal').value = saved.signal;
+
+      function saveFilters(){
+        localStorage.setItem('savedFilters', JSON.stringify({
+          market: document.getElementById('market').value,
+          signal: document.getElementById('signal').value,
+        }));
+      }
+
+      function renderExplorer() {
+        APP_CONFIG.featureFlags.showAdvanced = document.getElementById('showAdvanced').checked;
+        const date = document.getElementById('date').value;
+        const market = document.getElementById('market').value || 'HR';
+        const signal = document.getElementById('signal').value;
+        const book = document.getElementById('book').value;
+        const confidence = document.getElementById('confidence').value;
+        const minEdge = Number(document.getElementById('edge').value || 0) / 100;
+        const lineupOnly = document.getElementById('lineup').checked;
+
+        const filtered = picks
+          .filter((r)=>r.game_date===date)
+          .filter((r)=>r.market===market)
+          .filter((r)=>signal==='ALL'||r.signal===signal)
+          .filter((r)=>book==='ALL'||r.sportsbook===book)
+          .filter((r)=>confidence==='ALL'||r.confidence_band===confidence)
+          .filter((r)=>r.edge_pct>=minEdge)
+          .filter((r)=>!lineupOnly||r.lineup_confirmed)
+          .sort((a,b)=>b.model_score-a.model_score || b.edge_pct-a.edge_pct);
+
+        const teamExposure = {};
+        filtered.forEach((r)=>{ teamExposure[r.team]=(teamExposure[r.team]||0)+1; });
+        const exposure = Object.entries(teamExposure).filter(([,n])=>n>=2);
+        const warn = document.getElementById('exposureWarnings');
+        if(exposure.length){
+          warn.textContent = `Exposure warning: ${exposure.map(([team,n])=>`${team} x${n}`).join(', ')}.`;
+          warn.classList.remove('hidden');
+        } else {
+          warn.classList.add('hidden');
+        }
+
+        const tbody = document.getElementById('rows');
+        tbody.innerHTML = '';
+        filtered.forEach((row) => {
+          const corrFlag = row.market === 'ML' ? '<span class="tag">corr:team-total</span>' : '<span class="tag">corr:none</span>';
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${row.player} <span class="tag">tier:${row.visibility_tier}</span><div class="muted">${row.matchup} · ${row.game_time}</div>${corrFlag}</td>
+          <td>${row.side} ${row.line ?? ''} (${row.market})</td>
+          <td>${row.odds} <span class="muted">${row.sportsbook}</span></td>
+          <td>${Math.round(row.model_probability*100)}% <span class="muted">score ${row.model_score}</span></td>
+          <td>${Math.round(row.implied_probability*100)}%</td>
+          <td>${(row.edge_pct*100).toFixed(1)}%</td>
+          <td>${row.signal} <span class="muted">${row.confidence_band}</span></td>
+          <td>${row.lineup_confirmed ? 'Lineup ✅' : 'Lineup ⚠️'} · ${row.weather_flag}</td>
+          <td><button data-id="${row.id}" class="details-btn">Details</button> <button data-id="${row.id}" class="log-btn">Log Bet</button> <button data-id="${row.market}" class="fav-btn">☆</button></td>`;
+          const details = document.createElement('tr');
+          details.className = 'hidden';
+          details.id = `details-${row.id}`;
+
+          let factorHtml = '';
+          if (APP_CONFIG.featureFlags.showFactorDetail) {
+            factorHtml = Object.entries(row.factors || {}).map(([k,v]) => `<div>${k}: ${v}<div class="bar-wrap"><div class="bar" style="width:${v}%"></div></div></div>`).join('');
+          }
+          const reasons = APP_CONFIG.featureFlags.showReasons ? row.reasons.join(' • ') : 'PRO feature hidden';
+
+          details.innerHTML = `<td colspan="9"><strong>Reasons:</strong> ${reasons}<br/><strong>Risk:</strong> ${row.risk.join(' • ')}<br/><strong>Context:</strong> ${row.context}${APP_CONFIG.featureFlags.showAdvanced ? `<hr/>${factorHtml}` : ''}</td>`;
+          tbody.appendChild(tr); tbody.appendChild(details);
+        });
+
+        document.querySelectorAll('.details-btn').forEach((btn)=>btn.onclick = () => {
+          document.getElementById(`details-${btn.dataset.id}`).classList.toggle('hidden');
+        });
+        document.querySelectorAll('.log-btn').forEach((btn)=>btn.onclick = () => {
+          const msg = document.getElementById('message');
+          msg.textContent = `Queued bet log for row ${btn.dataset.id} (integration hook for /api/bets).`;
+          msg.classList.remove('hidden');
+        });
+        document.querySelectorAll('.fav-btn').forEach((btn)=>btn.onclick = () => {
+          if(!favorites.includes(btn.dataset.id)) favorites.push(btn.dataset.id);
+          localStorage.setItem('favoriteMarkets', JSON.stringify(favorites));
+        });
+
+        saveFilters();
+      }
+
+      function renderPerf(){
+        document.getElementById('perfCards').innerHTML = [
+          ['ROI',`${performance.roi}%`],['Win %',`${performance.winRate}%`],['Units',performance.units],['Bets',performance.bets]
+        ].map(([k,v])=>`<div class='card'><div class='muted'>${k}</div><div>${v}</div></div>`).join('');
+        document.getElementById('signalRows').innerHTML = performance.signal.map((s)=>`<tr><td>${s.name}</td><td>${s.bets}</td><td>${s.win}%</td><td>${s.roi}%</td></tr>`).join('');
+        document.getElementById('bucketRows').innerHTML = performance.buckets.map((b)=>`<tr><td>${b.label}</td><td>${b.bets}</td><td>${b.roi}%</td></tr>`).join('');
+      }
+
+      function renderHealth(){
+        document.getElementById('healthCards').innerHTML = [
+          ['Stale Sources',health.stale_sources.join(', ')],['Missing Sources',health.missing_sources.join(', ')],['Data Freshness','odds: 8m · weather: 22m · lineups: 11m'],['Feature Flag','advanced metrics toggleable']
+        ].map(([k,v])=>`<div class='card'><div class='muted'>${k}</div><div>${v}</div></div>`).join('');
+        document.getElementById('calRows').innerHTML = health.calibration.map((r)=>`<tr><td>${r[0]}</td><td>${r[1]}%</td><td>${r[2]}%</td></tr>`).join('');
+        document.getElementById('factorDiag').innerHTML = health.factors.map((f)=>`<div>${f[0]}<div class='bar-wrap'><div class='bar' style='width:${Math.round(f[1]*100)}%'></div></div></div>`).join('');
+      }
+
+      function renderClv(){
+        document.getElementById('clvCards').innerHTML = [
+          ['Avg CLV', (clv.avg*100).toFixed(2)+'%'],['Visibility', APP_CONFIG.featureFlags.showCLV ? 'enabled' : 'hidden'],['Market Count', clv.by.length],['Status','tracking open→close']
+        ].map(([k,v])=>`<div class='card'><div class='muted'>${k}</div><div>${v}</div></div>`).join('');
+        document.getElementById('clvRows').innerHTML = clv.by.map((r)=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${(r[2]*100).toFixed(2)}%</td><td>${r[3]}</td></tr>`).join('');
+      }
+
+      function renderBankroll(){
+        document.getElementById('bankrollCards').innerHTML = [
+          ['Current Bankroll', bankroll.current],['Peak', bankroll.peak],['Max Drawdown', bankroll.drawdown+'%'],['Streak', bankroll.streak]
+        ].map(([k,v])=>`<div class='card'><div class='muted'>${k}</div><div>${v}</div></div>`).join('');
+        document.getElementById('betRows').innerHTML = bankroll.bets.map((b)=>`<tr><td>${b[0]}</td><td>${b[1]}</td><td>${b[2]}</td><td>${b[3]}</td><td>${b[4]}</td><td>${b[5]}</td><td>${b[6]}</td></tr>`).join('');
+      }
+
+      document.querySelectorAll('.tab').forEach((btn)=>btn.addEventListener('click', ()=>{
+        document.querySelectorAll('.tab').forEach((b)=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.page').forEach((p)=>p.classList.add('hidden'));
+        document.getElementById(btn.dataset.tab).classList.remove('hidden');
+      }));
+
+      ['date','market','signal','book','confidence','edge','lineup','showAdvanced'].forEach((id)=>{
+        document.getElementById(id).addEventListener('change', renderExplorer);
+      });
+
+      marketSel.value = marketSel.value || 'HR';
+      renderExplorer();
+      renderPerf();
+      renderHealth();
+      renderClv();
+      renderBankroll();
+    </script>
+  </body>
+</html>

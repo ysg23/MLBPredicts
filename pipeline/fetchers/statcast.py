@@ -16,6 +16,12 @@ from db.database import upsert_many
 pb_cache.enable()
 
 
+def _round_or_none(value, digits: int):
+    if value is None or pd.isna(value):
+        return None
+    return round(float(value), digits)
+
+
 def fetch_statcast_window(start_date: str, end_date: str) -> pd.DataFrame:
     """
     Pull Statcast data for a date range.
@@ -31,7 +37,7 @@ def fetch_statcast_window(start_date: str, end_date: str) -> pd.DataFrame:
     return df
 
 
-def compute_batter_hr_stats(df: pd.DataFrame, window_days: int) -> list[dict]:
+def compute_batter_hr_stats(df: pd.DataFrame, window_days: int, stat_date: str | None = None) -> list[dict]:
     """
     From raw Statcast pitch data, compute per-batter HR-relevant aggregates.
     
@@ -53,7 +59,7 @@ def compute_batter_hr_stats(df: pd.DataFrame, window_days: int) -> list[dict]:
     # All plate appearances for counting stats
     pa_events = df[df["events"].notna()].copy()
 
-    stat_date = datetime.now().strftime("%Y-%m-%d")
+    stat_date = stat_date or datetime.now().strftime("%Y-%m-%d")
     rows = []
 
     for batter_id in batted["batter"].unique():
@@ -164,19 +170,19 @@ def compute_batter_hr_stats(df: pd.DataFrame, window_days: int) -> list[dict]:
             "bat_hand": bat_hand,
             "stat_date": stat_date,
             "window_days": window_days,
-            "barrel_pct": round(barrel_pct, 1) if barrel_pct else None,
+            "barrel_pct": _round_or_none(barrel_pct, 1),
             "hard_hit_pct": round(hard_hit, 1),
             "avg_exit_velo": round(avg_ev, 1),
             "max_exit_velo": round(max_ev, 1),
             "fly_ball_pct": round(fb_pct, 1),
             "hr_per_fb": round(hr_per_fb, 1),
-            "pull_pct": round(pull_pct, 1) if pull_pct else None,
+            "pull_pct": _round_or_none(pull_pct, 1),
             "avg_launch_angle": round(avg_la, 1),
             "sweet_spot_pct": round(sweet_spot, 1),
             "iso_power": round(iso, 3),
             "slg": round(slg, 3),
             "woba": None,  # needs linear weights calc
-            "xwoba": round(xwoba, 3) if xwoba else None,
+            "xwoba": _round_or_none(xwoba, 3),
             "xslg": None,  # from Statcast leaderboard
             "pa": n_pa,
             "ab": n_ab,
@@ -194,13 +200,16 @@ def compute_batter_hr_stats(df: pd.DataFrame, window_days: int) -> list[dict]:
     return rows
 
 
-def fetch_daily_batter_stats():
+def fetch_daily_batter_stats(as_of_date: str | None = None):
     """
     Main entry: fetch rolling window stats for all batters.
     Pulls data for the longest window (30 days) once, then slices for 7 and 14.
     """
     print("\n🏏 Fetching daily batter stats...")
-    today = datetime.now()
+    if as_of_date:
+        today = datetime.strptime(as_of_date, "%Y-%m-%d")
+    else:
+        today = datetime.now()
     max_window = max(BATTER_WINDOWS)
     
     start = (today - timedelta(days=max_window)).strftime("%Y-%m-%d")
@@ -218,7 +227,7 @@ def fetch_daily_batter_stats():
         window_df = full_df[full_df["game_date"] >= window_start]
         
         print(f"  📐 Computing {window}-day stats ({len(window_df):,} pitches)...")
-        rows = compute_batter_hr_stats(window_df, window)
+        rows = compute_batter_hr_stats(window_df, window, stat_date=today.strftime("%Y-%m-%d"))
         all_rows.extend(rows)
         print(f"  ✅ {len(rows)} batters computed for {window}-day window")
 

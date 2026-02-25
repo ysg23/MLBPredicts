@@ -250,6 +250,15 @@ def _confidence_band(model_score: float, risk_flags: list[str]) -> str:
     return band
 
 
+def determine_visibility_tier(signal: str, confidence_band: str) -> str:
+    """Simple tiering extension point for future monetization."""
+    sig = (signal or "").upper()
+    conf = (confidence_band or "").upper()
+    if sig == "BET" and conf == "HIGH":
+        return "FREE"
+    return "PRO"
+
+
 def assign_signal(market: str, model_score: float, edge_pct: float | None) -> str:
     spec = get_market_spec(market)
     thresholds = spec.thresholds
@@ -390,6 +399,12 @@ def _normalize_row_for_storage(
         )
     if normalized.get("confidence_band") is None:
         normalized["confidence_band"] = _confidence_band(float(normalized["model_score"]), parsed_risk)
+
+    if normalized.get("visibility_tier") is None:
+        normalized["visibility_tier"] = determine_visibility_tier(
+            str(normalized.get("signal") or ""),
+            str(normalized.get("confidence_band") or ""),
+        )
 
     if normalized.get("lineup_confirmed") is None or normalized.get("weather_final") is None:
         lineup_confirmed, weather_final = _lineup_weather_flags(game_date, int(normalized["game_id"]))

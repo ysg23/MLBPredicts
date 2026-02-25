@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from alerts import send_market_alerts
 from db.database import complete_score_run, create_score_run, fail_score_run
 from scoring.base_engine import score_market_for_date
 
@@ -111,6 +112,7 @@ def score_markets(
     all_markets: bool = False,
     only_game_id: int | None = None,
     triggered_by: str = "manual_score",
+    send_alerts: bool = False,
 ) -> list[dict[str, Any]]:
     if all_markets:
         markets = DEFAULT_ALL_MARKETS
@@ -121,14 +123,18 @@ def score_markets(
 
     results: list[dict[str, Any]] = []
     for mkt in markets:
-        results.append(
-            score_one_market(
-                market=mkt,
-                game_date=game_date,
-                only_game_id=only_game_id,
-                triggered_by=triggered_by,
-            )
+        result = score_one_market(
+            market=mkt,
+            game_date=game_date,
+            only_game_id=only_game_id,
+            triggered_by=triggered_by,
         )
+        if send_alerts and str(result.get("status", "")).lower() == "completed":
+            try:
+                result["alert"] = send_market_alerts(game_date=game_date, market=mkt)
+            except Exception as exc:
+                result["alert"] = {"sent": False, "reason": f"error:{exc}"}
+        results.append(result)
     return results
 
 
@@ -138,6 +144,7 @@ def main() -> int:
     parser.add_argument("--market", type=str, help="Single market code")
     parser.add_argument("--all-markets", action="store_true", help="Score default high-ROI market set")
     parser.add_argument("--game-id", type=int, help="Optional game_id scope")
+    parser.add_argument("--send-alerts", action="store_true", help="Send Discord alerts for scored markets")
     args = parser.parse_args()
 
     date_str = args.date or _today_str()
@@ -146,9 +153,11 @@ def main() -> int:
         market=args.market,
         all_markets=args.all_markets,
         only_game_id=args.game_id,
+        send_alerts=args.send_alerts,
     )
+    has_failures = any(str(item.get("status", "")).lower() == "failed" for item in results)
     print(json.dumps({"game_date": date_str, "results": results}, indent=2, default=str))
-    return 0
+    return 1 if has_failures else 0
 
 
 if __name__ == "__main__":

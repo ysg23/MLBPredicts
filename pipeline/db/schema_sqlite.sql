@@ -492,6 +492,7 @@ CREATE TABLE IF NOT EXISTS model_scores (
     edge REAL,
     signal TEXT,
     confidence_band TEXT,
+    visibility_tier TEXT DEFAULT 'FREE',
     factors_json TEXT,
     reasons_json TEXT,
     risk_flags_json TEXT,

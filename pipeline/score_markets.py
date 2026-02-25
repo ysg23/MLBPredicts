@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from alerts import send_market_alerts
@@ -39,7 +39,7 @@ DEFAULT_ALL_MARKETS = [
 
 
 def _today_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _load_market_module(market: str):

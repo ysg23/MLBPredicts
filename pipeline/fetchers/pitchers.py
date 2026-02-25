@@ -18,7 +18,7 @@ from pybaseball import statcast_pitcher
 from pybaseball import cache as pb_cache
 
 from config import PITCHER_WINDOWS
-from db.database import upsert_many
+from db.database import query, upsert_many
 
 
 pb_cache.enable()
@@ -153,6 +153,19 @@ def _fetch_pitcher_window(start_dt: str, end_dt: str, pitcher_id: int) -> pd.Dat
     return statcast_pitcher(start_dt, end_dt, pitcher_id)
 
 
+def _build_pitcher_team_map(as_of_date: str) -> dict[int, str]:
+    """Map pitcher_id -> team abbreviation from the games table."""
+    rows = query(
+        """
+        SELECT home_pitcher_id AS pid, home_team AS team FROM games WHERE game_date = ?
+        UNION ALL
+        SELECT away_pitcher_id AS pid, away_team AS team FROM games WHERE game_date = ?
+        """,
+        (as_of_date, as_of_date),
+    )
+    return {int(r["pid"]): str(r["team"]) for r in rows if r.get("pid") is not None}
+
+
 def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = None) -> int:
     """
     Fetch pitcher rolling stats for all pitcher_ids and write to pitcher_stats table.
@@ -163,6 +176,8 @@ def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = N
     start_30 = end_dt - timedelta(days=30)
     start_14 = end_dt - timedelta(days=14)
 
+    pitcher_team_map = _build_pitcher_team_map(as_of_date)
+
     rows_to_upsert = []
     for pid in sorted(set([int(x) for x in pitcher_ids if x])):
         try:
@@ -170,9 +185,11 @@ def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = N
             if df30 is None or df30.empty:
                 continue
 
+            team = pitcher_team_map.get(pid)
+
             # 30-day metrics
             m30 = _compute_pitcher_metrics(df30)
-            m30.update({"stat_date": as_of_date, "window_days": 30})
+            m30.update({"stat_date": as_of_date, "window_days": 30, "team": team})
             rows_to_upsert.append(m30)
 
             # 14-day slice
@@ -181,7 +198,7 @@ def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = N
             else:
                 df14 = df30  # fallback
             m14 = _compute_pitcher_metrics(df14)
-            m14.update({"stat_date": as_of_date, "window_days": 14})
+            m14.update({"stat_date": as_of_date, "window_days": 14, "team": team})
             rows_to_upsert.append(m14)
 
         except Exception as e:

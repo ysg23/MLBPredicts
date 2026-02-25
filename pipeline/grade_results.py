@@ -4,7 +4,7 @@ Grade outcomes and settle bets for a date.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from clv import capture_closing_lines_for_date, update_bet_clv_for_date
@@ -19,7 +19,7 @@ from grading.player_props import grade_player_prop_outcomes
 
 
 def _today_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _selection_candidates(game_date: str) -> list[dict[str, Any]]:
@@ -74,7 +74,7 @@ def _selection_candidates(game_date: str) -> list[dict[str, Any]]:
 def _upsert_outcomes(outcomes: list[dict[str, Any]]) -> int:
     if not outcomes:
         return 0
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     normalized: list[dict[str, Any]] = []
     for row in outcomes:
         item = dict(row)

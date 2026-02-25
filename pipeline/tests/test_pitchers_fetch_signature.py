@@ -51,12 +51,17 @@ def test_fetch_daily_pitcher_stats_writes_rows_with_player_id_signature(monkeypa
         rows.extend(payload)
         return len(payload)
 
+    def fake_query(_sql, _params=None):
+        return [{"pid": 555, "team": "NYY"}]
+
     monkeypatch.setattr(pitchers, "statcast_pitcher", fake_statcast_pitcher)
     monkeypatch.setattr(pitchers, "upsert_many", fake_upsert_many)
+    monkeypatch.setattr(pitchers, "query", fake_query)
 
     saved = pitchers.fetch_daily_pitcher_stats([555], as_of_date="2023-03-31")
 
     assert saved == 2
     assert len(rows) == 2
     assert all(r["player_id"] == 555 for r in rows)
+    assert all(r["team"] == "NYY" for r in rows)
     assert sorted(r["window_days"] for r in rows) == [14, 30]

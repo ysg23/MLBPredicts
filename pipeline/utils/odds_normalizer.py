@@ -3,7 +3,7 @@ Normalize The Odds API responses into a single internal market-odds shape.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -87,12 +87,12 @@ def _as_int(value: Any) -> int | None:
 
 def _date_from_commence(commence_time: str | None) -> str:
     if not commence_time:
-        return datetime.utcnow().strftime("%Y-%m-%d")
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
     normalized = commence_time.replace("Z", "+00:00")
     try:
         return datetime.fromisoformat(normalized).strftime("%Y-%m-%d")
     except ValueError:
-        return datetime.utcnow().strftime("%Y-%m-%d")
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _normalize_side(
@@ -208,7 +208,7 @@ def normalize_event_odds(
         rows: normalized rows for supported markets
         summary: counts for logging/monitoring
     """
-    fetched_at = fetched_at or datetime.utcnow().isoformat()
+    fetched_at = fetched_at or datetime.now(timezone.utc).isoformat()
     event_id = event_payload.get("id")
     game_id = event_payload.get("id")
     game_date = _date_from_commence(event_payload.get("commence_time"))

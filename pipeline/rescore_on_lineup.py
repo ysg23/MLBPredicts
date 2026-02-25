@@ -13,7 +13,7 @@ import importlib
 from collections import defaultdict
 
 from alerts import send_market_alerts
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from db.database import (
@@ -27,7 +27,7 @@ from db.database import (
 from scoring.base_engine import get_park_factor, get_weather, load_today_games
 
 
-BATTER_MARKETS = ["HR", "HITS_1P", "HITS_LINE", "TB_LINE", "RBI", "RUNS"]
+BATTER_MARKETS = ["HR", "HITS_1P", "HITS_LINE", "TB_LINE"]
 GAME_MARKETS_OPTIONAL = ["TOTAL", "TEAM_TOTAL", "F5_TOTAL", "ML", "F5_ML"]
 
 MARKET_MODULES = {
@@ -45,7 +45,7 @@ MARKET_MODULES = {
 
 
 def _today_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _lineup_signature(rows: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:

@@ -27,8 +27,7 @@ WEATHER_API_BASE = "https://api.openweathermap.org/data/2.5"
 BATTER_WINDOWS = [7, 14, 30]          # 7-day hot streak, 14-day trend, 30-day baseline
 PITCHER_WINDOWS = [14, 30]             # last 2-3 starts, last month
 
-# Season for historical backfill
-HISTORICAL_SEASONS = [2024, 2025]      # 2 seasons is plenty for initial training
+# Season reference values (backfill uses --start-date/--end-date CLI args)
 CURRENT_SEASON = 2026
 
 # ── HR Model Factor Weights (starting point — will tune) ──

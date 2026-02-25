@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from db.database import complete_score_run, create_score_run, fail_score_run
 from fetchers.odds import fetch_hr_props
 
 
 def _today_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def refresh_odds(game_date: str) -> dict:

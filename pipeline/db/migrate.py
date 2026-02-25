@@ -11,6 +11,7 @@ import sqlite3
 import sys
 from pathlib import Path
 from typing import Iterable, Tuple
+from urllib.parse import quote
 
 PIPELINE_ROOT = Path(__file__).resolve().parents[1]
 if str(PIPELINE_ROOT) not in sys.path:
@@ -28,11 +29,31 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def _get_postgres_url() -> str:
-    return (
+    # Priority: explicit URL env vars first.
+    direct = (
         os.getenv("SUPABASE_DB_URL", "")
         or os.getenv("DATABASE_URL", "")
         or os.getenv("SUPABASE_DATABASE_URL", "")
+        or os.getenv("POSTGRES_URL", "")
+        or os.getenv("POSTGRESQL_URL", "")
     ).strip()
+    if direct:
+        return direct
+
+    # Fallback: assemble from discrete Railway PG* variables.
+    pg_host = os.getenv("PGHOST", "").strip()
+    pg_port = os.getenv("PGPORT", "5432").strip() or "5432"
+    pg_db = os.getenv("PGDATABASE", "postgres").strip() or "postgres"
+    pg_user = os.getenv("PGUSER", "postgres").strip() or "postgres"
+    pg_pass = os.getenv("PGPASSWORD", "").strip()
+    if pg_host:
+        user_enc = quote(pg_user, safe="")
+        if pg_pass:
+            pass_enc = quote(pg_pass, safe="")
+            return f"postgresql://{user_enc}:{pass_enc}@{pg_host}:{pg_port}/{pg_db}"
+        return f"postgresql://{user_enc}@{pg_host}:{pg_port}/{pg_db}"
+
+    return ""
 
 
 def get_connection() -> Tuple[object, str]:

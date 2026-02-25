@@ -310,6 +310,7 @@ CREATE TABLE IF NOT EXISTS batter_daily_features (
     k_pct_vs_rhp DOUBLE PRECISION,
     hot_cold_delta_iso DOUBLE PRECISION,
     hot_cold_delta_hit_rate DOUBLE PRECISION,
+    recent_lineup_slot INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(game_date, player_id)
@@ -357,6 +358,9 @@ CREATE TABLE IF NOT EXISTS pitcher_daily_features (
     split_k_pct_vs_rhh DOUBLE PRECISION,
     split_hr_allowed_rate_vs_lhh DOUBLE PRECISION,
     split_hr_allowed_rate_vs_rhh DOUBLE PRECISION,
+    tto_k_decay_pct DOUBLE PRECISION,
+    tto_hr_increase_pct DOUBLE PRECISION,
+    tto_endurance_score DOUBLE PRECISION,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(game_date, pitcher_id)
@@ -426,6 +430,8 @@ CREATE TABLE IF NOT EXISTS game_context_features (
     lineups_confirmed_home SMALLINT NOT NULL DEFAULT 0 CHECK(lineups_confirmed_home IN (0, 1)),
     lineups_confirmed_away SMALLINT NOT NULL DEFAULT 0 CHECK(lineups_confirmed_away IN (0, 1)),
     is_final_context SMALLINT NOT NULL DEFAULT 0 CHECK(is_final_context IN (0, 1)),
+    is_day_game SMALLINT,
+    game_time_et TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(game_date, game_id)

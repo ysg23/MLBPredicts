@@ -30,15 +30,17 @@ PITCHER_WINDOWS = [14, 30]             # last 2-3 starts, last month
 # Season reference values (backfill uses --start-date/--end-date CLI args)
 CURRENT_SEASON = 2026
 
-# ── HR Model Factor Weights (starting point — will tune) ──
+# ── HR Model Factor Weights (enhanced with lineup order, TTO, day/night) ──
 # These are initial weights. The model will learn better ones
 # from backtesting, but you need a starting point.
 HR_FACTOR_WEIGHTS = {
-    "barrel_score":       0.25,   # barrel % is king for HR prediction
-    "matchup_score":      0.20,   # batter vs pitcher handedness + ISO split
-    "park_weather_score":  0.25,   # park factor × wind × temp composite
-    "pitcher_vuln_score":  0.20,   # pitcher's HR/9, HR/FB, hard hit allowed
-    "hot_cold_score":      0.10,   # recent wRC+ trend (regression-prone, lower weight)
+    "barrel_score":       0.22,   # barrel % is king for HR prediction
+    "matchup_score":      0.18,   # batter vs pitcher handedness + ISO split
+    "park_weather_score":  0.20,   # park factor × wind × temp composite
+    "pitcher_vuln_score":  0.15,   # pitcher's HR/9, HR/FB, hard hit allowed
+    "hot_cold_score":      0.08,   # recent wRC+ trend (regression-prone, lower weight)
+    "lineup_order_score":  0.10,   # batting order position (PA, protection, run context)
+    "tto_score":           0.07,   # times-through-the-order pitcher degradation
 }
 
 # ── Signal Thresholds ──────────────────────────────────────

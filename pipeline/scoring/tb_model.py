@@ -113,26 +113,24 @@ def _infer_opp_pitcher(game: GameContext, batting_team: str | None) -> int | Non
 
 
 def _pa_expect(batting_order: int | None) -> float:
+    """Expected PA by lineup slot — refined with actual MLB averages."""
     if batting_order is None:
         return 4.05
     slot = int(batting_order)
-    if slot <= 2:
-        return 4.7
-    if slot <= 4:
-        return 4.5
-    if slot <= 6:
-        return 4.2
-    return 3.85
+    pa_by_slot = {1: 4.8, 2: 4.7, 3: 4.55, 4: 4.45, 5: 4.3, 6: 4.15, 7: 4.0, 8: 3.85, 9: 3.75}
+    return pa_by_slot.get(slot, 4.05)
 
 
 def _score_from_factors(factors: dict[str, float]) -> float:
     weights = {
-        "power_form_score": 0.28,
-        "tb_rate_score": 0.22,
-        "pitcher_damage_allow_score": 0.16,
+        "power_form_score": 0.24,
+        "tb_rate_score": 0.20,
+        "pitcher_damage_allow_score": 0.14,
         "batting_order_score": 0.12,
-        "park_weather_score": 0.12,
-        "xbh_profile_score": 0.10,
+        "park_weather_score": 0.10,
+        "xbh_profile_score": 0.08,
+        "tto_score": 0.07,
+        "day_night_score": 0.05,
     }
     return max(0.0, min(100.0, sum(factors.get(k, 50.0) * w for k, w in weights.items())))
 
@@ -146,6 +144,7 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
     context = _context(game.game_date, game.game_id)
     weather_mult = _to_float((context or {}).get("weather_run_multiplier")) or 1.0
     hr_mult = _to_float((context or {}).get("weather_hr_multiplier")) or 1.0
+    is_day_game = (context or {}).get("is_day_game")
     lineups_confirmed = bool((context or {}).get("lineups_confirmed_home") and (context or {}).get("lineups_confirmed_away"))
 
     results: list[dict[str, Any]] = []
@@ -206,9 +205,23 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
         if opp_pitcher:
             pitcher_damage_allow_score += ((_to_float(opp_pitcher.get("hard_hit_pct_allowed_14")) or 35.0) - 35.0) * 1.4
             pitcher_damage_allow_score += ((_to_float(opp_pitcher.get("barrel_pct_allowed_14")) or 8.5) - 8.5) * 2.0
-        batting_order_score = 74.0 - ((batting_order or 5) - 1) * 7.0
+        # More granular batting order score
+        order_scores = {1: 72, 2: 78, 3: 85, 4: 82, 5: 70, 6: 58, 7: 45, 8: 35, 9: 28}
+        batting_order_score = float(order_scores.get(batting_order or 5, 50))
         park_weather_score = 50.0 + ((env_mult - 1.0) * 180.0)
         xbh_profile_score = 50.0 + ((doubles_rate or 0.05) * 200.0) + ((triples_rate or 0.005) * 400.0) + ((hr_rate or 0.04) * 250.0)
+
+        # TTO factor: pitcher degradation = more damage for batters
+        tto_score = 50.0
+        if opp_pitcher and opp_pitcher.get("tto_endurance_score") is not None:
+            tto_score = 100.0 - float(opp_pitcher["tto_endurance_score"])
+
+        # Day/night: day games slightly favor offense (TB)
+        day_night_score = 50.0
+        if is_day_game == 1:
+            day_night_score = 56.0
+        elif is_day_game == 0:
+            day_night_score = 47.0
 
         factors = {
             "power_form_score": max(0.0, min(100.0, power_form_score)),
@@ -217,6 +230,8 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
             "batting_order_score": max(0.0, min(100.0, batting_order_score)),
             "park_weather_score": max(0.0, min(100.0, park_weather_score)),
             "xbh_profile_score": max(0.0, min(100.0, xbh_profile_score)),
+            "tto_score": max(0.0, min(100.0, tto_score)),
+            "day_night_score": max(0.0, min(100.0, day_night_score)),
         }
         model_score = _score_from_factors(factors)
         risk_flags = build_risk_flags(

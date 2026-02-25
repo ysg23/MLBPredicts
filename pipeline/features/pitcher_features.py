@@ -90,6 +90,69 @@ def _latest_pitcher_windows(
     return latest
 
 
+def _tto_metrics(row14: dict[str, Any] | None, row30: dict[str, Any] | None) -> tuple[float | None, float | None, float | None]:
+    """Estimate times-through-the-order (TTO) performance decay.
+
+    Uses pitcher's batters-faced volume and whiff/chase sustainability to model
+    how much they degrade on 2nd/3rd time through the lineup.
+
+    League averages (source: Fangraphs TTO splits):
+    - 1st time: ~22% K rate, ~2.5% HR/PA
+    - 2nd time: ~20% K rate, ~3.0% HR/PA  (~9% K decay, ~20% HR increase)
+    - 3rd time: ~18% K rate, ~3.5% HR/PA  (~18% K decay, ~40% HR increase)
+
+    Returns (tto_k_decay_pct, tto_hr_increase_pct, tto_endurance_score).
+    """
+    # Use 30-day window preferentially for stability
+    primary = row30 or row14 or {}
+    secondary = row14 or {}
+
+    bf = _to_float(primary.get("batters_faced"))
+    k_pct = _to_float(primary.get("k_pct"))
+    whiff = _to_float(primary.get("whiff_pct") or secondary.get("whiff_pct"))
+    chase = _to_float(primary.get("chase_pct") or secondary.get("chase_pct"))
+    velo = _to_float(primary.get("avg_fastball_velo") or secondary.get("avg_fastball_velo"))
+    velo_trend = _to_float(secondary.get("fastball_velo_trend"))
+
+    if bf is None and k_pct is None:
+        return None, None, None
+
+    # Base league-average TTO decay
+    base_k_decay = 18.0        # 18% K rate decline by 3rd TTO (league avg)
+    base_hr_increase = 40.0    # 40% HR rate increase by 3rd TTO (league avg)
+
+    # High-whiff pitchers hold up better through the order
+    whiff_adj = 0.0
+    if whiff is not None:
+        whiff_adj = (whiff - 24.0) * 0.4  # above-avg whiff = less decay
+
+    # High-chase pitchers also hold up better (hitters keep expanding)
+    chase_adj = 0.0
+    if chase is not None:
+        chase_adj = (chase - 30.0) * 0.3
+
+    # Velocity maintenance helps sustain performance
+    velo_adj = 0.0
+    if velo is not None:
+        velo_adj = (velo - 93.0) * 0.5  # above-avg velo = less decay
+
+    # Declining velocity = faster TTO decay
+    velo_trend_adj = 0.0
+    if velo_trend is not None:
+        velo_trend_adj = velo_trend * 2.0  # positive trend = less decay
+
+    # Compute adjusted decay rates
+    tto_k_decay = max(5.0, min(35.0, base_k_decay - whiff_adj - chase_adj - velo_adj - velo_trend_adj))
+    tto_hr_increase = max(10.0, min(70.0, base_hr_increase + (tto_k_decay - base_k_decay) * 1.5))
+
+    # Endurance score: 0-100, higher = pitcher holds up better through TTO
+    # Low K decay + low HR increase = high endurance
+    endurance = 100.0 - (tto_k_decay * 1.5) - (tto_hr_increase * 0.5)
+    endurance = max(0.0, min(100.0, endurance))
+
+    return round(tto_k_decay, 2), round(tto_hr_increase, 2), round(endurance, 2)
+
+
 def _starter_role_confidence(row14: dict[str, Any], row30: dict[str, Any]) -> float:
     bf14 = _to_float(row14.get("batters_faced")) if row14 else None
     bf30 = _to_float(row30.get("batters_faced")) if row30 else None
@@ -123,6 +186,8 @@ def _build_pitcher_row(
 
     team_id = row30.get("team") or row14.get("team") or team_context.get("team_id")
     throws = row30.get("pitch_hand") or row14.get("pitch_hand")
+
+    tto_k_decay, tto_hr_inc, tto_endurance = _tto_metrics(row14 or None, row30 or None)
 
     return {
         "game_date": game_dt.strftime("%Y-%m-%d"),
@@ -158,6 +223,10 @@ def _build_pitcher_row(
         "outs_recorded_avg_last_5": None,
         "pitches_avg_last_5": None,
         "starter_role_confidence": _starter_role_confidence(row14, row30),
+        # Times-through-the-order metrics
+        "tto_k_decay_pct": tto_k_decay,
+        "tto_hr_increase_pct": tto_hr_inc,
+        "tto_endurance_score": tto_endurance,
         "split_k_pct_vs_lhh": _to_float(row30.get("k_pct_vs_lhb") or row14.get("k_pct_vs_lhb")),
         "split_k_pct_vs_rhh": _to_float(row30.get("k_pct_vs_rhb") or row14.get("k_pct_vs_rhb")),
         "split_hr_allowed_rate_vs_lhh": _to_float(

@@ -1,8 +1,12 @@
 """
 Historical backfill runner for multi-year MLB data seeding.
 
-Example:
+Examples:
+  # Full pipeline (fetch + features + score + grade):
   python backfill_historical.py --start-date 2023-03-30 --end-date 2025-10-01 --build-features --score --grade
+
+  # Score + grade only (skip fetching, data already in DB):
+  python backfill_historical.py --start-date 2023-03-30 --end-date 2025-10-01 --skip-fetch --score --all-markets --grade
 """
 from __future__ import annotations
 
@@ -44,9 +48,13 @@ def run_backfill(
     grade: bool = False,
     all_markets: bool = True,
     market: str = "HR",
+    skip_fetch: bool = False,
 ) -> dict[str, Any]:
     summaries: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+
+    if skip_fetch:
+        print("⏩ --skip-fetch: skipping raw data fetching (games/umpires/batters/pitchers)")
 
     for game_date in _iter_dates(start_date, end_date):
         print("\n" + "=" * 70)
@@ -66,27 +74,28 @@ def run_backfill(
         }
 
         try:
-            games = fetch_todays_games(game_date)
-            day_summary["games"] = len(games)
+            if not skip_fetch:
+                games = fetch_todays_games(game_date)
+                day_summary["games"] = len(games)
 
-            umpire_map = fetch_umpire_assignments(game_date)
-            day_summary["umpires"] = len(umpire_map)
+                umpire_map = fetch_umpire_assignments(game_date)
+                day_summary["umpires"] = len(umpire_map)
 
-            if include_lineups:
-                lineup_result = fetch_lineups_for_date(game_date)
-                day_summary["lineups"] = int(lineup_result.get("inserted", 0))
+                if include_lineups:
+                    lineup_result = fetch_lineups_for_date(game_date)
+                    day_summary["lineups"] = int(lineup_result.get("inserted", 0))
 
-            batter_rows = fetch_daily_batter_stats(as_of_date=game_date) or []
-            day_summary["batter_rows"] = len(batter_rows)
+                batter_rows = fetch_daily_batter_stats(as_of_date=game_date) or []
+                day_summary["batter_rows"] = len(batter_rows)
 
-            pitcher_ids: list[int] = []
-            for game in games:
-                if game.get("home_pitcher_id"):
-                    pitcher_ids.append(int(game["home_pitcher_id"]))
-                if game.get("away_pitcher_id"):
-                    pitcher_ids.append(int(game["away_pitcher_id"]))
-            pitcher_ids = sorted(set(pitcher_ids))
-            day_summary["pitcher_rows"] = int(fetch_daily_pitcher_stats(pitcher_ids, as_of_date=game_date))
+                pitcher_ids: list[int] = []
+                for game in games:
+                    if game.get("home_pitcher_id"):
+                        pitcher_ids.append(int(game["home_pitcher_id"]))
+                    if game.get("away_pitcher_id"):
+                        pitcher_ids.append(int(game["away_pitcher_id"]))
+                pitcher_ids = sorted(set(pitcher_ids))
+                day_summary["pitcher_rows"] = int(fetch_daily_pitcher_stats(pitcher_ids, as_of_date=game_date))
 
             if build_features:
                 feature_summary = run_build_features(date=game_date, all_dates=False)
@@ -132,6 +141,7 @@ def main() -> int:
     parser.add_argument("--grade", action="store_true", help="Run result grading per date")
     parser.add_argument("--market", default="HR", help="Single market for --score when not using --all-markets")
     parser.add_argument("--all-markets", action="store_true", help="Use default market bundle for --score")
+    parser.add_argument("--skip-fetch", action="store_true", help="Skip raw data fetching (use existing data in DB)")
 
     args = parser.parse_args()
     summary = run_backfill(
@@ -143,6 +153,7 @@ def main() -> int:
         grade=args.grade,
         all_markets=args.all_markets,
         market=args.market,
+        skip_fetch=args.skip_fetch,
     )
     print("\n📦 Backfill summary:")
     print(summary)

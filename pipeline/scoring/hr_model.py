@@ -187,26 +187,21 @@ def _determine_opposing_pitcher(game: GameContext, batter_team: str | None):
 
 def score_game(game: GameContext, weather: dict | None, park_factor: float, season: int) -> list[dict]:
     """
-    Score all HR-prop players for this game based on market_odds rows.
+    Score all HR-prop players for this game using feature-based universe.
     """
-    # Build player universe from market_odds (HR market for this game)
-    odds_rows = get_market_odds_rows(
-        game_date=game.game_date, market="HR", game_id=game.game_id,
-    )
-    if not odds_rows:
+    # Build player universe from batter_daily_features (not odds)
+    from .base_engine import get_batter_universe
+    universe = get_batter_universe(game.game_date, game)
+    if not universe:
         return []
 
-    # Deduplicate to unique players
     player_info: dict[int, dict[str, Any]] = {}
-    for row in odds_rows:
-        pid = row.get("player_id")
-        if pid is None:
-            continue
-        pid = int(pid)
+    for entity in universe:
+        pid = int(entity["player_id"])
         if pid not in player_info:
             player_info[pid] = {
-                "team_abbr": row.get("team_abbr") or row.get("team_id"),
-                "opponent_team_abbr": row.get("opponent_team_abbr") or row.get("opponent_team_id"),
+                "team_abbr": entity.get("team_abbr") or entity.get("team_id"),
+                "opponent_team_abbr": entity.get("opponent_team_abbr") or entity.get("opponent_team_id"),
             }
 
     if not player_info:

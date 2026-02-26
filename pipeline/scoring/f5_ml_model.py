@@ -12,6 +12,7 @@ from .base_engine import (
     assign_signal,
     build_reasons,
     build_risk_flags,
+    get_game_sides,
     get_market_odds_rows,
     probability_edge_pct,
 )
@@ -98,9 +99,6 @@ def _offense_strength(team: dict[str, Any] | None) -> float:
 
 def score_game(game: GameContext, weather: dict | None, park_factor: float, season: int) -> list[dict]:
     del weather, season
-    odds_rows = get_market_odds_rows(game_date=game.game_date, market=MARKET, game_id=game.game_id)
-    if not odds_rows:
-        return []
 
     context = _context(game.game_date, game.game_id)
     lineup_confirmed = bool((context or {}).get("lineups_confirmed_home") and (context or {}).get("lineups_confirmed_away"))
@@ -119,13 +117,23 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
     home_win_prob = _sigmoid(net_home / 8.0)
     away_win_prob = 1.0 - home_win_prob
 
+    # Build universe from game sides; enrich with odds if available
+    sides = get_game_sides(game)
+    odds_rows = get_market_odds_rows(game_date=game.game_date, market=MARKET, game_id=game.game_id)
+    odds_by_side: dict[str, dict[str, Any]] = {}
+    for o in odds_rows:
+        s = (o.get("side") or "").upper()
+        if s in {"HOME", "AWAY"}:
+            odds_by_side[s] = o
+
     results: list[dict[str, Any]] = []
-    for odds in odds_rows:
-        side = (odds.get("side") or "").upper()
-        if side not in {"HOME", "AWAY"}:
-            continue
+    for side_info in sides:
+        side = side_info["side"]
         model_prob = home_win_prob if side == "HOME" else away_win_prob
-        implied_prob = _to_float(odds.get("implied_probability"))
+
+        # Odds enrichment (optional)
+        odds = odds_by_side.get(side)
+        implied_prob = _to_float(odds.get("implied_probability")) if odds else None
         edge_pct = probability_edge_pct(model_prob, implied_prob)
 
         side_strength = home_strength if side == "HOME" else away_strength
@@ -148,22 +156,22 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
             weather_pending=context is None,
         )
 
-        team_id = game.home_team if side == "HOME" else game.away_team
-        opponent_team_id = game.away_team if side == "HOME" else game.home_team
+        team_id = side_info["team_id"]
+        opponent_team_id = side_info["opponent_team_id"]
         results.append(
             {
                 "market": MARKET,
                 "entity_type": "game",
                 "game_id": game.game_id,
-                "event_id": odds.get("event_id"),
+                "event_id": odds.get("event_id") if odds else None,
                 "team_id": team_id,
                 "opponent_team_id": opponent_team_id,
-                "team_abbr": odds.get("team_abbr") or team_id,
-                "opponent_team_abbr": odds.get("opponent_team_abbr") or opponent_team_id,
-                "selection_key": odds.get("selection_key"),
+                "team_abbr": (odds.get("team_abbr") if odds else None) or team_id,
+                "opponent_team_abbr": (odds.get("opponent_team_abbr") if odds else None) or opponent_team_id,
+                "selection_key": odds.get("selection_key") if odds else None,
                 "side": side,
-                "bet_type": odds.get("bet_type") or f"F5_ML_{side}",
-                "line": _to_float(odds.get("line")),
+                "bet_type": (odds.get("bet_type") if odds else None) or f"F5_ML_{side}",
+                "line": _to_float(odds.get("line")) if odds else None,
                 "model_score": round(model_score, 2),
                 "model_prob": round(model_prob, 4),
                 "model_projection": None,

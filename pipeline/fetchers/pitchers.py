@@ -166,6 +166,66 @@ def _build_pitcher_team_map(as_of_date: str) -> dict[int, str]:
     return {int(r["pid"]): str(r["team"]) for r in rows if r.get("pid") is not None}
 
 
+def compute_pitcher_stats_from_df(
+    bulk_df: pd.DataFrame,
+    pitcher_ids: list[int],
+    as_of_date: str,
+) -> int:
+    """
+    Compute pitcher rolling stats by filtering a pre-fetched bulk Statcast
+    DataFrame. No API calls made — eliminates thousands of statcast_pitcher()
+    calls during backfill.
+
+    Args:
+        bulk_df:     Full Statcast DataFrame covering at least (as_of_date - 30 days)
+                     through as_of_date. Must have a 'pitcher' column.
+        pitcher_ids: List of MLB pitcher IDs to compute stats for.
+        as_of_date:  The game date (YYYY-MM-DD).
+
+    Returns:
+        Number of rows upserted to pitcher_stats.
+    """
+    if bulk_df.empty or "pitcher" not in bulk_df.columns:
+        return 0
+
+    end_dt = datetime.strptime(as_of_date, "%Y-%m-%d")
+    start_30 = (end_dt - timedelta(days=30)).strftime("%Y-%m-%d")
+    start_14 = (end_dt - timedelta(days=14)).strftime("%Y-%m-%d")
+    as_of_str = end_dt.strftime("%Y-%m-%d")
+
+    # Narrow bulk_df to the 30-day window for this date
+    mask = (bulk_df["game_date"] >= start_30) & (bulk_df["game_date"] <= as_of_str)
+    df30_all = bulk_df[mask]
+
+    pitcher_team_map = _build_pitcher_team_map(as_of_date)
+    rows_to_upsert: list[dict] = []
+
+    for pid in sorted(set(int(x) for x in pitcher_ids if x)):
+        try:
+            df30 = df30_all[df30_all["pitcher"] == pid]
+            if df30.empty:
+                continue
+
+            team = pitcher_team_map.get(pid)
+
+            m30 = _compute_pitcher_metrics(df30)
+            m30.update({"stat_date": as_of_date, "window_days": 30, "team": team})
+            rows_to_upsert.append(m30)
+
+            df14 = df30[df30["game_date"] >= start_14]
+            m14 = _compute_pitcher_metrics(df14)
+            m14.update({"stat_date": as_of_date, "window_days": 14, "team": team})
+            rows_to_upsert.append(m14)
+
+        except Exception as exc:
+            print(f"  ❌ Pitcher compute failed for {pid}: {exc}")
+
+    if not rows_to_upsert:
+        return 0
+
+    return upsert_many("pitcher_stats", rows_to_upsert, conflict_cols=["player_id", "stat_date", "window_days"])
+
+
 def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = None) -> int:
     """
     Fetch pitcher rolling stats for all pitcher_ids and write to pitcher_stats table.

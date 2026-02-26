@@ -3,6 +3,10 @@ Statcast batter stats fetcher.
 
 Pulls rolling window stats for HR-relevant metrics using pybaseball.
 Only fetches recent windows (7/14/30 days) for daily runs — fast and lightweight.
+
+For backfill use, prefer fetch_statcast_bulk() + compute_batter_stats_for_date()
+which fetches the full range once and slices in memory, avoiding thousands of
+repeated API calls.
 """
 import pandas as pd
 from datetime import datetime, timedelta
@@ -198,6 +202,95 @@ def compute_batter_hr_stats(df: pd.DataFrame, window_days: int, stat_date: str |
         })
 
     return rows
+
+
+def fetch_statcast_bulk(start_date: str, end_date: str, chunk_days: int = 60) -> pd.DataFrame:
+    """
+    Fetch Statcast pitch data for an entire date range in fixed-day chunks.
+
+    Used by backfill_historical to pull the full range once, then slice per
+    day — instead of making one 30-day API call per game date.
+
+    Args:
+        start_date: Inclusive start in YYYY-MM-DD. Caller should subtract 30
+                    days of padding so rolling windows are correct on the first
+                    real game date.
+        end_date:   Inclusive end in YYYY-MM-DD.
+        chunk_days: Days per API call (default 60 ≈ 2 months).
+
+    Returns:
+        Single concatenated DataFrame with normalised game_date strings.
+    """
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+
+    chunks: list[pd.DataFrame] = []
+    chunk_start = start
+    chunk_num = 0
+
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + timedelta(days=chunk_days - 1), end)
+        s = chunk_start.strftime("%Y-%m-%d")
+        e = chunk_end.strftime("%Y-%m-%d")
+        chunk_num += 1
+        print(f"  📦 Bulk Statcast chunk {chunk_num}: {s} → {e}")
+        try:
+            df = statcast(start_dt=s, end_dt=e)
+            if df is not None and not df.empty:
+                chunks.append(df)
+                print(f"     ✅ {len(df):,} pitches")
+            else:
+                print(f"     ⚠️  No data returned")
+        except Exception as exc:
+            print(f"     ❌ Chunk failed: {exc}")
+        chunk_start = chunk_end + timedelta(days=1)
+
+    if not chunks:
+        print("  ❌ No Statcast data fetched for bulk range")
+        return pd.DataFrame()
+
+    full_df = pd.concat(chunks, ignore_index=True)
+    # Normalise game_date to string for consistent slicing downstream
+    if "game_date" in full_df.columns:
+        full_df["game_date"] = full_df["game_date"].astype(str).str[:10]
+    full_df = full_df.drop_duplicates()
+    print(f"  ✅ Bulk fetch complete: {len(full_df):,} total pitches across {chunk_num} chunk(s)")
+    return full_df
+
+
+def compute_batter_stats_for_date(bulk_df: pd.DataFrame, as_of_date: str) -> list[dict]:
+    """
+    Compute rolling-window batter stats for a single game date from a
+    pre-fetched bulk DataFrame. No API calls made.
+
+    Args:
+        bulk_df:    Full Statcast DataFrame covering at least (as_of_date - 30 days)
+                    through as_of_date.
+        as_of_date: The game date to compute stats for (YYYY-MM-DD).
+
+    Returns:
+        List of batter stat dicts ready for DB upsert (same schema as
+        fetch_daily_batter_stats).
+    """
+    today = datetime.strptime(as_of_date, "%Y-%m-%d")
+    max_window = max(BATTER_WINDOWS)
+    earliest_needed = (today - timedelta(days=max_window)).strftime("%Y-%m-%d")
+
+    # Slice the pre-fetched data to the window we need
+    mask = (bulk_df["game_date"] >= earliest_needed) & (bulk_df["game_date"] <= as_of_date)
+    window_df = bulk_df[mask]
+
+    if window_df.empty:
+        return []
+
+    all_rows: list[dict] = []
+    for window in BATTER_WINDOWS:
+        window_start = (today - timedelta(days=window)).strftime("%Y-%m-%d")
+        w_df = window_df[window_df["game_date"] >= window_start]
+        rows = compute_batter_hr_stats(w_df, window, stat_date=as_of_date)
+        all_rows.extend(rows)
+
+    return all_rows
 
 
 def fetch_daily_batter_stats(as_of_date: str | None = None):

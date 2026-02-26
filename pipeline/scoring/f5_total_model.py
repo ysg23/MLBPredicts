@@ -114,9 +114,6 @@ def _team_expected_f5_runs(
 
 def score_game(game: GameContext, weather: dict | None, park_factor: float, season: int) -> list[dict]:
     del weather, season
-    odds_rows = get_market_odds_rows(game_date=game.game_date, market=MARKET, game_id=game.game_id)
-    if not odds_rows:
-        return []
 
     context = _context(game.game_date, game.game_id)
     lineup_confirmed = bool((context or {}).get("lineups_confirmed_home") and (context or {}).get("lineups_confirmed_away"))
@@ -148,19 +145,31 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
         "umpire_run_env_score": max(0.0, min(100.0, 50.0 + ((ump_run_env - 1.0) * 200.0))),
     }
 
+    # Build OVER/UNDER from odds if available, otherwise use projection as default line
+    odds_rows = get_market_odds_rows(game_date=game.game_date, market=MARKET, game_id=game.game_id)
+    odds_by_side: dict[str, dict[str, Any]] = {}
+    for o in odds_rows:
+        s = (o.get("side") or "").upper()
+        if s in {"OVER", "UNDER"}:
+            odds_by_side[s] = o
+
+    default_line = round(projection * 2.0) / 2.0
+    sides_to_score = ["OVER", "UNDER"]
+
     results: list[dict[str, Any]] = []
-    for odds in odds_rows:
-        side = (odds.get("side") or "").upper()
-        if side not in {"OVER", "UNDER"}:
-            continue
-        line = _to_float(odds.get("line"))
+    for side in sides_to_score:
+        odds = odds_by_side.get(side)
+        line = _to_float(odds.get("line")) if odds else default_line
         if line is None:
             continue
+
         prob_over = _sigmoid((projection - line) / 1.35)
         model_prob = prob_over if side == "OVER" else (1.0 - prob_over)
-        implied_prob = _to_float(odds.get("implied_probability"))
+
+        # Odds enrichment (optional)
+        implied_prob = _to_float(odds.get("implied_probability")) if odds else None
         edge_prob = probability_edge_pct(model_prob, implied_prob)
-        edge_proj = projection_edge_pct(projection, line)
+        edge_proj = projection_edge_pct(projection, line) if odds else None
         edge_pct = edge_prob if edge_prob is not None else edge_proj
 
         model_score = (
@@ -187,10 +196,10 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
                 "market": MARKET,
                 "entity_type": "game",
                 "game_id": game.game_id,
-                "event_id": odds.get("event_id"),
-                "selection_key": odds.get("selection_key"),
+                "event_id": odds.get("event_id") if odds else None,
+                "selection_key": odds.get("selection_key") if odds else None,
                 "side": side,
-                "bet_type": odds.get("bet_type") or f"F5_TOTAL_{side}",
+                "bet_type": (odds.get("bet_type") if odds else None) or f"F5_TOTAL_{side}",
                 "line": line,
                 "model_score": round(model_score, 2),
                 "model_prob": round(model_prob, 4),

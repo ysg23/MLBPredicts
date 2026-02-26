@@ -13,6 +13,7 @@ from .base_engine import (
     build_reasons,
     build_risk_flags,
     get_market_odds_rows,
+    get_pitcher_universe,
     probability_edge_pct,
     projection_edge_pct,
 )
@@ -135,46 +136,39 @@ def _project_outs(
 
 def score_game(game: GameContext, weather: dict | None, park_factor: float, season: int) -> list[dict]:
     del weather, park_factor, season
-    odds_rows = get_market_odds_rows(game_date=game.game_date, market=MARKET, game_id=game.game_id)
-    if not odds_rows:
-        return []
 
     context = _context(game.game_date, game.game_id)
     lineups_confirmed = bool((context or {}).get("lineups_confirmed_home") and (context or {}).get("lineups_confirmed_away"))
 
+    # Build pitcher universe from games table, enrich with odds if available
+    pitchers = get_pitcher_universe(game)
+    if not pitchers:
+        return []
+
+    all_odds = get_market_odds_rows(game_date=game.game_date, market=MARKET, game_id=game.game_id)
+    odds_by_pitcher: dict[int, list[dict[str, Any]]] = {}
+    for o in all_odds:
+        pid = o.get("player_id")
+        if pid is not None:
+            odds_by_pitcher.setdefault(int(pid), []).append(o)
+
     results: list[dict[str, Any]] = []
-    for odds in odds_rows:
-        pitcher_id = odds.get("player_id")
-        if pitcher_id is None:
-            continue
+    for p in pitchers:
+        pitcher_id = p["player_id"]
         pitcher = _pitcher_features(game.game_date, int(pitcher_id))
         if pitcher is None:
             continue
 
-        opp_team = _team_features(game.game_date, odds.get("opponent_team_id"))
+        opp_team = _team_features(game.game_date, p["opponent_team_id"])
         projection, factors, missing_inputs = _project_outs(pitcher, opp_team, context)
 
-        line = _to_float(odds.get("line"))
-        side = (odds.get("side") or "OVER").upper()
-        if line is None:
-            line = 15.5
-        prob_over = _sigmoid((projection - line) / 1.6)
-        model_prob = prob_over if side == "OVER" else (1.0 - prob_over)
-
-        implied_prob = _to_float(odds.get("implied_probability"))
-        edge_prob = probability_edge_pct(model_prob, implied_prob)
-        edge_proj = projection_edge_pct(projection, line)
-        edge_pct = edge_prob if edge_prob is not None else edge_proj
-
-        model_score = max(0.0, min(100.0, (
+        base_score = max(0.0, min(100.0, (
             (factors["starter_leash_score"] * 0.30)
             + (factors["pitch_count_score"] * 0.22)
             + (factors["efficiency_score"] * 0.24)
             + (factors["opponent_patience_score"] * 0.16)
             + (factors["weather_delay_risk_score"] * 0.08)
         )))
-        if edge_pct is not None:
-            model_score = max(0.0, min(100.0, model_score + max(-8.0, min(8.0, edge_pct * 0.35))))
 
         risk_flags = build_risk_flags(
             missing_inputs=missing_inputs,
@@ -182,34 +176,88 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
             weather_pending=context is None,
         )
         reasons = build_reasons(factors)
+        pitcher_name = p.get("player_name")
 
-        results.append(
-            {
-                "market": MARKET,
-                "entity_type": "pitcher",
-                "game_id": game.game_id,
-                "event_id": odds.get("event_id"),
-                "player_id": int(pitcher_id),
-                "player_name": odds.get("player_name"),
-                "team_id": odds.get("team_id"),
-                "opponent_team_id": odds.get("opponent_team_id"),
-                "team_abbr": odds.get("team_abbr"),
-                "opponent_team_abbr": odds.get("opponent_team_abbr"),
-                "selection_key": odds.get("selection_key"),
-                "side": side,
-                "bet_type": odds.get("bet_type") or f"OUTS_RECORDED_{side}",
-                "line": line,
-                "model_score": round(model_score, 2),
-                "model_prob": round(model_prob, 4),
-                "model_projection": round(projection, 3),
-                "book_implied_prob": round(implied_prob, 4) if implied_prob is not None else None,
-                "edge": round(edge_pct, 3) if edge_pct is not None else None,
-                "signal": assign_signal(MARKET, model_score, edge_pct),
-                "factors_json": factors,
-                "reasons_json": reasons,
-                "risk_flags_json": risk_flags,
-                "lineup_confirmed": 1 if lineups_confirmed else 0,
-                "weather_final": 1 if (context and context.get("weather_temp_f") is not None) else 0,
-            }
-        )
+        pitcher_odds = odds_by_pitcher.get(int(pitcher_id), [])
+        if pitcher_odds:
+            for odds in pitcher_odds:
+                line = _to_float(odds.get("line"))
+                side = (odds.get("side") or "OVER").upper()
+                if line is None:
+                    line = 15.5
+                prob_over = _sigmoid((projection - line) / 1.6)
+                model_prob = prob_over if side == "OVER" else (1.0 - prob_over)
+
+                implied_prob = _to_float(odds.get("implied_probability"))
+                edge_prob = probability_edge_pct(model_prob, implied_prob)
+                edge_proj = projection_edge_pct(projection, line)
+                edge_pct = edge_prob if edge_prob is not None else edge_proj
+
+                model_score = base_score
+                if edge_pct is not None:
+                    model_score = max(0.0, min(100.0, model_score + max(-8.0, min(8.0, edge_pct * 0.35))))
+
+                results.append(
+                    {
+                        "market": MARKET,
+                        "entity_type": "pitcher",
+                        "game_id": game.game_id,
+                        "event_id": odds.get("event_id"),
+                        "player_id": int(pitcher_id),
+                        "player_name": odds.get("player_name") or pitcher_name,
+                        "team_id": p["team_id"],
+                        "opponent_team_id": p["opponent_team_id"],
+                        "team_abbr": odds.get("team_abbr") or p["team_abbr"],
+                        "opponent_team_abbr": odds.get("opponent_team_abbr") or p["opponent_team_abbr"],
+                        "selection_key": odds.get("selection_key"),
+                        "side": side,
+                        "bet_type": odds.get("bet_type") or f"OUTS_RECORDED_{side}",
+                        "line": line,
+                        "model_score": round(model_score, 2),
+                        "model_prob": round(model_prob, 4),
+                        "model_projection": round(projection, 3),
+                        "book_implied_prob": round(implied_prob, 4) if implied_prob is not None else None,
+                        "edge": round(edge_pct, 3) if edge_pct is not None else None,
+                        "signal": assign_signal(MARKET, model_score, edge_pct),
+                        "factors_json": factors,
+                        "reasons_json": reasons,
+                        "risk_flags_json": risk_flags,
+                        "lineup_confirmed": 1 if lineups_confirmed else 0,
+                        "weather_final": 1 if (context and context.get("weather_temp_f") is not None) else 0,
+                    }
+                )
+        else:
+            # No odds — emit OVER row with default line
+            default_line = round(projection * 2.0) / 2.0
+            prob_over = _sigmoid((projection - default_line) / 1.6)
+
+            results.append(
+                {
+                    "market": MARKET,
+                    "entity_type": "pitcher",
+                    "game_id": game.game_id,
+                    "event_id": None,
+                    "player_id": int(pitcher_id),
+                    "player_name": pitcher_name,
+                    "team_id": p["team_id"],
+                    "opponent_team_id": p["opponent_team_id"],
+                    "team_abbr": p["team_abbr"],
+                    "opponent_team_abbr": p["opponent_team_abbr"],
+                    "selection_key": None,
+                    "side": "OVER",
+                    "bet_type": "OUTS_RECORDED_OVER",
+                    "line": default_line,
+                    "model_score": round(base_score, 2),
+                    "model_prob": round(prob_over, 4),
+                    "model_projection": round(projection, 3),
+                    "book_implied_prob": None,
+                    "edge": None,
+                    "signal": assign_signal(MARKET, base_score, None),
+                    "factors_json": factors,
+                    "reasons_json": reasons,
+                    "risk_flags_json": risk_flags,
+                    "lineup_confirmed": 1 if lineups_confirmed else 0,
+                    "weather_final": 1 if (context and context.get("weather_temp_f") is not None) else 0,
+                }
+            )
     return results

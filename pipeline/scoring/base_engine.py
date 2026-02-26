@@ -185,6 +185,76 @@ def get_market_odds_rows(
     )
 
 
+def get_batter_universe(game_date: str, game: GameContext) -> list[dict[str, Any]]:
+    """Batters from batter_daily_features for teams in this game."""
+    rows = query(
+        """
+        SELECT DISTINCT player_id, team_id
+        FROM batter_daily_features
+        WHERE game_date = ?
+          AND team_id IN (?, ?)
+          AND player_id IS NOT NULL
+        """,
+        (game_date, game.home_team, game.away_team),
+    )
+    results: list[dict[str, Any]] = []
+    for r in rows:
+        team = r["team_id"]
+        opp = game.away_team if team == game.home_team else game.home_team
+        results.append({
+            "player_id": int(r["player_id"]),
+            "team_id": team,
+            "team_abbr": team,
+            "opponent_team_id": opp,
+            "opponent_team_abbr": opp,
+        })
+    return results
+
+
+def get_pitcher_universe(game: GameContext) -> list[dict[str, Any]]:
+    """Probable starters from the games table."""
+    pitchers: list[dict[str, Any]] = []
+    if game.home_pitcher_id:
+        pitchers.append({
+            "player_id": game.home_pitcher_id,
+            "player_name": game.home_pitcher_name,
+            "team_id": game.home_team,
+            "opponent_team_id": game.away_team,
+            "team_abbr": game.home_team,
+            "opponent_team_abbr": game.away_team,
+        })
+    if game.away_pitcher_id:
+        pitchers.append({
+            "player_id": game.away_pitcher_id,
+            "player_name": game.away_pitcher_name,
+            "team_id": game.away_team,
+            "opponent_team_id": game.home_team,
+            "team_abbr": game.away_team,
+            "opponent_team_abbr": game.home_team,
+        })
+    return pitchers
+
+
+def get_game_sides(game: GameContext) -> list[dict[str, Any]]:
+    """HOME and AWAY sides for game-level markets (ML, totals, etc.)."""
+    return [
+        {
+            "side": "HOME",
+            "team_id": game.home_team,
+            "team_abbr": game.home_team,
+            "opponent_team_id": game.away_team,
+            "opponent_team_abbr": game.away_team,
+        },
+        {
+            "side": "AWAY",
+            "team_id": game.away_team,
+            "team_abbr": game.away_team,
+            "opponent_team_id": game.home_team,
+            "opponent_team_abbr": game.home_team,
+        },
+    ]
+
+
 def get_best_hr_odds(game_id: int, player_id: int) -> dict[str, Any] | None:
     """
     Backward-compatible HR lookup from legacy hr_odds.
@@ -264,8 +334,20 @@ def determine_visibility_tier(signal: str, confidence_band: str) -> str:
 def assign_signal(market: str, model_score: float, edge_pct: float | None) -> str:
     spec = get_market_spec(market)
     thresholds = spec.thresholds
-    edge = edge_pct if edge_pct is not None else 0.0
     score = float(model_score)
+
+    if edge_pct is None:
+        # Score-only mode (no odds available) — signal based purely on model confidence
+        if score >= thresholds["BET"]["min_score"]:
+            return "BET"
+        if score >= thresholds["LEAN"]["min_score"]:
+            return "LEAN"
+        if score <= thresholds["FADE"]["max_score"]:
+            return "FADE"
+        return "SKIP"
+
+    # Full mode (odds available) — require both score and edge
+    edge = edge_pct
     if score >= thresholds["BET"]["min_score"] and edge >= thresholds["BET"]["min_edge_pct"]:
         return "BET"
     if score >= thresholds["LEAN"]["min_score"] and edge >= thresholds["LEAN"]["min_edge_pct"]:

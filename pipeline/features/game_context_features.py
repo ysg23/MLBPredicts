@@ -42,7 +42,7 @@ def _games_for_date(game_dt: date) -> list[dict[str, Any]]:
         """
         SELECT game_id, home_team, away_team, stadium_id,
                home_pitcher_id, away_pitcher_id, umpire_name, game_time
-        FROM games
+        FROM mlb_games
         WHERE game_date = ?
         ORDER BY game_id
         """,
@@ -98,7 +98,7 @@ def _latest_weather(game_id: int) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM weather
+        FROM mlb_weather
         WHERE game_id = ?
         ORDER BY fetch_time DESC
         LIMIT 1
@@ -115,7 +115,7 @@ def _park_factors(stadium_id: int | None, season: int) -> tuple[float | None, fl
     season_rows = query(
         """
         SELECT hr_factor
-        FROM park_factors
+        FROM mlb_park_factors
         WHERE stadium_id = ? AND season = ?
         LIMIT 1
         """,
@@ -128,7 +128,7 @@ def _park_factors(stadium_id: int | None, season: int) -> tuple[float | None, fl
     fallback_rows = query(
         """
         SELECT hr_park_factor
-        FROM stadiums
+        FROM mlb_stadiums
         WHERE stadium_id = ?
         LIMIT 1
         """,
@@ -145,7 +145,7 @@ def _lineup_confirmed(game_dt: date, game_id: int, team_id: str) -> bool:
     rows = query(
         """
         SELECT 1
-        FROM lineups
+        FROM mlb_lineups
         WHERE game_date = ?
           AND game_id = ?
           AND team_id = ?
@@ -164,7 +164,7 @@ def _umpire_context(umpire_name: str | None, season: int) -> tuple[float | None,
     rows = query(
         """
         SELECT k_pct_above_avg, avg_runs_per_game
-        FROM umpires
+        FROM mlb_umpires
         WHERE umpire_name = ? AND season = ?
         LIMIT 1
         """,
@@ -291,7 +291,7 @@ def build_game_context_features(game_date: date | str) -> dict[str, Any]:
     upserted = 0
     for batch in _chunked(rows, size=MAX_BATCH_SIZE):
         upserted += upsert_many(
-            "game_context_features",
+            "mlb_game_context_features",
             batch,
             conflict_cols=["game_date", "game_id"],
         )

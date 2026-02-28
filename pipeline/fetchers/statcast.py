@@ -325,7 +325,7 @@ def fetch_daily_batter_stats(as_of_date: str | None = None):
         print(f"  ✅ {len(rows)} batters computed for {window}-day window")
 
     # Save to database
-    count = upsert_many("batter_stats", all_rows, 
+    count = upsert_many("mlb_batter_stats", all_rows,
                         ["player_id", "stat_date", "window_days"])
     print(f"  💾 Saved {count} batter stat rows to database")
     return all_rows

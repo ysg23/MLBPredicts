@@ -28,7 +28,7 @@ def _selection_candidates(game_date: str) -> list[dict[str, Any]]:
         SELECT
             game_date, market, game_id, event_id, entity_type, player_id, team_id,
             opponent_team_id, team_abbr, opponent_team_abbr, selection_key, side, bet_type, line
-        FROM model_scores
+        FROM mlb_model_scores
         WHERE game_date = ? AND COALESCE(is_active, 1) = 1
         """,
         (game_date,),
@@ -39,7 +39,7 @@ def _selection_candidates(game_date: str) -> list[dict[str, Any]]:
             game_date, market, game_id, NULL AS event_id, NULL AS entity_type, player_id, team_id,
             opponent_team_id, team_id AS team_abbr, opponent_team_id AS opponent_team_abbr,
             selection_key, side, bet_type, line
-        FROM bets
+        FROM mlb_bets
         WHERE game_date = ?
           AND (result IS NULL OR result = 'pending')
         """,
@@ -82,7 +82,7 @@ def _upsert_outcomes(outcomes: list[dict[str, Any]]) -> int:
         normalized.append(item)
     return int(
         upsert_many(
-            "market_outcomes",
+            "mlb_market_outcomes",
             normalized,
             conflict_cols=["market", "game_id", "player_id", "team_abbr", "bet_type", "line", "selection_key"],
         )
@@ -116,7 +116,7 @@ def _settle_bets(game_date: str, outcomes: list[dict[str, Any]]) -> dict[str, in
     pending_bets = query(
         """
         SELECT *
-        FROM bets
+        FROM mlb_bets
         WHERE game_date = ?
           AND (result IS NULL OR result = 'pending')
         """,
@@ -171,7 +171,7 @@ def _settle_bets(game_date: str, outcomes: list[dict[str, Any]]) -> dict[str, in
             )
             conn.execute(
                 """
-                UPDATE bets
+                UPDATE mlb_bets
                 SET result = ?,
                     payout = ?,
                     profit = ?,

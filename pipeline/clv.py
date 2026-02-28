@@ -41,7 +41,7 @@ def _ensure_closing_lines_table() -> None:
             now_expr = "CURRENT_TIMESTAMP"
         conn.execute(
             f"""
-            CREATE TABLE IF NOT EXISTS closing_lines (
+            CREATE TABLE IF NOT EXISTS mlb_closing_lines (
                 id {id_col},
                 game_date DATE NOT NULL,
                 market TEXT NOT NULL,
@@ -68,8 +68,8 @@ def _ensure_closing_lines_table() -> None:
             )
             """
         )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_closing_lines_date_market ON closing_lines(game_date, market)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_closing_lines_selection_key ON closing_lines(selection_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mlb_closing_lines_date_market ON mlb_closing_lines(game_date, market)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mlb_closing_lines_selection_key ON mlb_closing_lines(selection_key)")
         conn.commit()
     finally:
         conn.close()
@@ -81,7 +81,7 @@ def _selection_groups(game_date: str) -> list[dict[str, Any]]:
         SELECT
             game_date, market, game_id, event_id, entity_type, player_id, team_id,
             opponent_team_id, team_abbr, opponent_team_abbr, selection_key, side, bet_type, line
-        FROM market_odds
+        FROM mlb_market_odds
         WHERE game_date = ?
         GROUP BY game_date, market, game_id, event_id, entity_type, player_id, team_id,
                  opponent_team_id, team_abbr, opponent_team_abbr, selection_key, side, bet_type, line
@@ -94,7 +94,7 @@ def _latest_rows_per_book(group: dict[str, Any]) -> list[dict[str, Any]]:
     rows = query(
         """
         SELECT *
-        FROM market_odds
+        FROM mlb_market_odds
         WHERE game_date = ?
           AND market = ?
           AND game_id = ?
@@ -192,7 +192,7 @@ def capture_closing_lines_for_date(game_date: str) -> dict[str, int]:
         update_sql = ", ".join([f"{c}=excluded.{c}" for c in update_cols])
         conn.executemany(
             f"""
-            INSERT INTO closing_lines ({col_str})
+            INSERT INTO mlb_closing_lines ({col_str})
             VALUES ({placeholders})
             ON CONFLICT({conflict_cols}) DO UPDATE SET {update_sql}
             """,
@@ -209,7 +209,7 @@ def update_bet_clv_for_date(game_date: str) -> dict[str, int]:
     bets = query(
         """
         SELECT *
-        FROM bets
+        FROM mlb_bets
         WHERE game_date = ?
         """,
         (game_date,),
@@ -230,7 +230,7 @@ def update_bet_clv_for_date(game_date: str) -> dict[str, int]:
                 rows = conn.execute(
                     """
                     SELECT *
-                    FROM closing_lines
+                    FROM mlb_closing_lines
                     WHERE game_date = ? AND market = ? AND game_id = ? AND selection_key = ?
                     LIMIT 1
                     """,
@@ -240,7 +240,7 @@ def update_bet_clv_for_date(game_date: str) -> dict[str, int]:
                 rows = conn.execute(
                     """
                     SELECT *
-                    FROM closing_lines
+                    FROM mlb_closing_lines
                     WHERE game_date = ?
                       AND market = ?
                       AND game_id = ?
@@ -288,7 +288,7 @@ def update_bet_clv_for_date(game_date: str) -> dict[str, int]:
 
             conn.execute(
                 """
-                UPDATE bets
+                UPDATE mlb_bets
                 SET odds_close = ?,
                     implied_prob_close = ?,
                     clv_open_to_close = ?,
@@ -314,7 +314,7 @@ def clv_summary(game_date: str) -> list[dict[str, Any]]:
             COUNT(*) AS bets_count,
             AVG(clv_open_to_close) AS avg_clv,
             AVG(line_delta) AS avg_line_delta
-        FROM bets
+        FROM mlb_bets
         WHERE game_date = ?
           AND clv_open_to_close IS NOT NULL
         GROUP BY game_date, market

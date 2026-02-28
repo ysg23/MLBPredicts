@@ -29,7 +29,7 @@ def _game_row(game_id: int) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT game_id, home_team, away_team, status, home_score, away_score
-        FROM games
+        FROM mlb_games
         WHERE game_id = ?
         LIMIT 1
         """,

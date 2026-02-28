@@ -133,7 +133,7 @@ def _mark_best_available_for_fetch(rows: list[dict[str, Any]], fetched_at: str) 
             candidates = conn.execute(
                 """
                 SELECT id, price_decimal, odds_decimal
-                FROM market_odds
+                FROM mlb_market_odds
                 WHERE game_date = ?
                   AND market = ?
                   AND (selection_key = ? OR (selection_key IS NULL AND ? IS NULL))
@@ -158,14 +158,14 @@ def _mark_best_available_for_fetch(rows: list[dict[str, Any]], fetched_at: str) 
 
             candidate_ids = [int(r["id"]) for r in candidates]
             conn.execute(
-                f"UPDATE market_odds SET is_best_available = 0 WHERE id IN ({','.join(['?'] * len(candidate_ids))})",
+                f"UPDATE mlb_market_odds SET is_best_available = 0 WHERE id IN ({','.join(['?'] * len(candidate_ids))})",
                 tuple(candidate_ids),
             )
             best = max(
                 candidates,
                 key=lambda r: float(r["price_decimal"] if r["price_decimal"] is not None else (r["odds_decimal"] or 0.0)),
             )
-            conn.execute("UPDATE market_odds SET is_best_available = 1 WHERE id = ?", (int(best["id"]),))
+            conn.execute("UPDATE mlb_market_odds SET is_best_available = 1 WHERE id = ?", (int(best["id"]),))
             flagged += 1
         conn.commit()
     finally:
@@ -246,13 +246,13 @@ def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
     consolidated = consolidate_odds(all_hr_rows)
 
     if consolidated:
-        inserted = insert_many("hr_odds", consolidated)
+        inserted = insert_many("mlb_hr_odds", consolidated)
         print(f"  💾 Saved {inserted} consolidated HR rows to hr_odds")
 
     deduped_normalized = _dedupe_market_rows(all_normalized_rows)
     touched_dates: set[str] = {str(r.get("game_date")) for r in deduped_normalized if r.get("game_date")}
     if deduped_normalized:
-        inserted = insert_many("market_odds", deduped_normalized)
+        inserted = insert_many("mlb_market_odds", deduped_normalized)
         best_flagged = _mark_best_available_for_fetch(deduped_normalized, fetched_at=fetched_at)
         print(
             f"  💾 Saved {inserted} normalized rows to market_odds "
@@ -313,7 +313,7 @@ def get_best_odds(player_name: str, game_date: str) -> dict:
     """
     results = query("""
         SELECT sportsbook, over_price, implied_prob_over
-        FROM hr_odds
+        FROM mlb_hr_odds
         WHERE player_name = ? AND game_date = ? AND over_price IS NOT NULL
         ORDER BY over_price DESC
         LIMIT 5

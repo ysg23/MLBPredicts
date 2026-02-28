@@ -177,7 +177,7 @@ def get_market_odds_rows(
     return query(
         f"""
         SELECT *
-        FROM market_odds
+        FROM mlb_market_odds
         WHERE {where_sql}
         ORDER BY fetched_at DESC
         """,
@@ -190,7 +190,7 @@ def get_batter_universe(game_date: str, game: GameContext) -> list[dict[str, Any
     rows = query(
         """
         SELECT DISTINCT player_id, team_id
-        FROM batter_daily_features
+        FROM mlb_batter_daily_features
         WHERE game_date = ?
           AND team_id IN (?, ?)
           AND player_id IS NOT NULL
@@ -262,7 +262,7 @@ def get_best_hr_odds(game_id: int, player_id: int) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT sportsbook, over_price, implied_prob_over, fetch_time
-        FROM hr_odds
+        FROM mlb_hr_odds
         WHERE game_id=? AND player_id=? AND over_price IS NOT NULL
         ORDER BY fetch_time DESC
         """,
@@ -294,7 +294,7 @@ def _lineup_weather_flags(game_date: str, game_id: int) -> tuple[int | None, int
     rows = query(
         """
         SELECT lineups_confirmed_home, lineups_confirmed_away, is_final_context
-        FROM game_context_features
+        FROM mlb_game_context_features
         WHERE game_date = ? AND game_id = ?
         LIMIT 1
         """,
@@ -363,7 +363,7 @@ def mark_previous_scores_inactive(game_date: str, market: str, game_id: int | No
         if game_id is None:
             cursor = conn.execute(
                 """
-                UPDATE model_scores
+                UPDATE mlb_model_scores
                 SET is_active = 0,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE game_date = ? AND market = ? AND COALESCE(is_active, 1) = 1
@@ -373,7 +373,7 @@ def mark_previous_scores_inactive(game_date: str, market: str, game_id: int | No
         else:
             cursor = conn.execute(
                 """
-                UPDATE model_scores
+                UPDATE mlb_model_scores
                 SET is_active = 0,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE game_date = ? AND market = ? AND game_id = ? AND COALESCE(is_active, 1) = 1
@@ -389,7 +389,7 @@ def mark_previous_scores_inactive(game_date: str, market: str, game_id: int | No
 def save_model_scores(rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
-    return int(insert_many("model_scores", rows))
+    return int(insert_many("mlb_model_scores", rows))
 
 
 def load_today_games(game_date: str) -> list[GameContext]:
@@ -397,7 +397,7 @@ def load_today_games(game_date: str) -> list[GameContext]:
         """
         SELECT game_id, game_date, game_time, home_team, away_team, home_pitcher_id, home_pitcher_name,
                away_pitcher_id, away_pitcher_name, stadium_id, home_pitcher_hand, away_pitcher_hand
-        FROM games
+        FROM mlb_games
         WHERE game_date=?
         """,
         (game_date,),
@@ -423,7 +423,7 @@ def load_today_games(game_date: str) -> list[GameContext]:
 
 def get_weather(game_id: int) -> dict[str, Any] | None:
     rows = query(
-        "SELECT * FROM weather WHERE game_id=? ORDER BY fetch_time DESC LIMIT 1",
+        "SELECT * FROM mlb_weather WHERE game_id=? ORDER BY fetch_time DESC LIMIT 1",
         (game_id,),
     )
     return rows[0] if rows else None
@@ -433,12 +433,12 @@ def get_park_factor(stadium_id: int | None, season: int) -> float:
     if stadium_id is None:
         return 1.0
     rows = query(
-        "SELECT hr_factor FROM park_factors WHERE stadium_id=? AND season=?",
+        "SELECT hr_factor FROM mlb_park_factors WHERE stadium_id=? AND season=?",
         (stadium_id, season),
     )
     if rows and rows[0].get("hr_factor") is not None:
         return float(rows[0]["hr_factor"])
-    fallback = query("SELECT hr_park_factor FROM stadiums WHERE stadium_id=?", (stadium_id,))
+    fallback = query("SELECT hr_park_factor FROM mlb_stadiums WHERE stadium_id=?", (stadium_id,))
     if fallback and fallback[0].get("hr_park_factor") is not None:
         return float(fallback[0]["hr_park_factor"])
     return 1.0

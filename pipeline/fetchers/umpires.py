@@ -38,7 +38,7 @@ def _ensure_umpire_assignments_table() -> None:
             now_expr = "CURRENT_TIMESTAMP"
         conn.execute(
             f"""
-            CREATE TABLE IF NOT EXISTS umpire_assignments (
+            CREATE TABLE IF NOT EXISTS mlb_umpire_assignments (
                 id {id_col},
                 game_date DATE NOT NULL,
                 game_id INTEGER NOT NULL,
@@ -52,13 +52,13 @@ def _ensure_umpire_assignments_table() -> None:
             """
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_umpire_assignments_date ON umpire_assignments(game_date)"
+            "CREATE INDEX IF NOT EXISTS idx_mlb_umpire_assignments_date ON mlb_umpire_assignments(game_date)"
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_umpire_assignments_game ON umpire_assignments(game_id)"
+            "CREATE INDEX IF NOT EXISTS idx_mlb_umpire_assignments_game ON mlb_umpire_assignments(game_id)"
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_umpire_assignments_fetched_at ON umpire_assignments(fetched_at)"
+            "CREATE INDEX IF NOT EXISTS idx_mlb_umpire_assignments_fetched_at ON mlb_umpire_assignments(fetched_at)"
         )
         conn.commit()
     finally:
@@ -122,7 +122,7 @@ def fetch_umpires_for_date(date_str: str | None = None) -> dict[str, Any]:
                 }
             )
 
-    inserted = insert_many("umpire_assignments", rows) if rows else 0
+    inserted = insert_many("mlb_umpire_assignments", rows) if rows else 0
 
     updated_games = 0
     if rows:
@@ -131,7 +131,7 @@ def fetch_umpires_for_date(date_str: str | None = None) -> dict[str, Any]:
             for row in rows:
                 cursor = conn.execute(
                     """
-                    UPDATE games
+                    UPDATE mlb_games
                     SET umpire_name = ?,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE game_id = ?

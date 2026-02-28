@@ -92,7 +92,7 @@ def _load_scores(market: str, start_date: str | None, end_date: str | None, sign
     return query(
         f"""
         SELECT *
-        FROM model_scores
+        FROM mlb_model_scores
         WHERE {where_sql}
         ORDER BY game_date, game_id, created_at, id
         """,
@@ -106,7 +106,7 @@ def _match_outcome(score: dict[str, Any]) -> dict[str, Any] | None:
         rows = query(
             """
             SELECT *
-            FROM market_outcomes
+            FROM mlb_market_outcomes
             WHERE market = ?
               AND game_id = ?
               AND selection_key = ?
@@ -120,7 +120,7 @@ def _match_outcome(score: dict[str, Any]) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM market_outcomes
+        FROM mlb_market_outcomes
         WHERE market = ?
           AND game_id = ?
           AND (player_id = ? OR (player_id IS NULL AND ? IS NULL))
@@ -158,7 +158,7 @@ def _match_open_odds(score: dict[str, Any]) -> dict[str, Any] | None:
         rows = query(
             """
             SELECT *
-            FROM market_odds
+            FROM mlb_market_odds
             WHERE market = ?
               AND game_id = ?
               AND selection_key = ?
@@ -174,7 +174,7 @@ def _match_open_odds(score: dict[str, Any]) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM market_odds
+        FROM mlb_market_odds
         WHERE market = ?
           AND game_id = ?
           AND (player_id = ? OR (player_id IS NULL AND ? IS NULL))
@@ -211,7 +211,7 @@ def _match_closing_odds(score: dict[str, Any]) -> dict[str, Any] | None:
         rows = query(
             """
             SELECT *
-            FROM closing_lines
+            FROM mlb_closing_lines
             WHERE market = ?
               AND game_id = ?
               AND selection_key = ?
@@ -225,7 +225,7 @@ def _match_closing_odds(score: dict[str, Any]) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM closing_lines
+        FROM mlb_closing_lines
         WHERE market = ?
           AND game_id = ?
           AND (player_id = ? OR (player_id IS NULL AND ? IS NULL))

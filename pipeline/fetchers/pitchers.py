@@ -157,9 +157,9 @@ def _build_pitcher_team_map(as_of_date: str) -> dict[int, str]:
     """Map pitcher_id -> team abbreviation from the games table."""
     rows = query(
         """
-        SELECT home_pitcher_id AS pid, home_team AS team FROM games WHERE game_date = ?
+        SELECT home_pitcher_id AS pid, home_team AS team FROM mlb_games WHERE game_date = ?
         UNION ALL
-        SELECT away_pitcher_id AS pid, away_team AS team FROM games WHERE game_date = ?
+        SELECT away_pitcher_id AS pid, away_team AS team FROM mlb_games WHERE game_date = ?
         """,
         (as_of_date, as_of_date),
     )
@@ -223,7 +223,7 @@ def compute_pitcher_stats_from_df(
     if not rows_to_upsert:
         return 0
 
-    return upsert_many("pitcher_stats", rows_to_upsert, conflict_cols=["player_id", "stat_date", "window_days"])
+    return upsert_many("mlb_pitcher_stats", rows_to_upsert, conflict_cols=["player_id", "stat_date", "window_days"])
 
 
 def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = None) -> int:
@@ -268,5 +268,5 @@ def fetch_daily_pitcher_stats(pitcher_ids: list[int], as_of_date: str | None = N
     if not rows_to_upsert:
         return 0
 
-    saved = upsert_many("pitcher_stats", rows_to_upsert, conflict_cols=["player_id", "stat_date", "window_days"])
+    saved = upsert_many("mlb_pitcher_stats", rows_to_upsert, conflict_cols=["player_id", "stat_date", "window_days"])
     return saved

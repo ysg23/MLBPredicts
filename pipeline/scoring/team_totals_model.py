@@ -41,7 +41,7 @@ def _team_features(game_date: str, team_id: str | None) -> dict[str, Any] | None
     rows = query(
         """
         SELECT *
-        FROM team_daily_features
+        FROM mlb_team_daily_features
         WHERE game_date = ? AND team_id = ?
         LIMIT 1
         """,
@@ -56,7 +56,7 @@ def _pitcher_features(game_date: str, pitcher_id: int | None) -> dict[str, Any] 
     rows = query(
         """
         SELECT *
-        FROM pitcher_daily_features
+        FROM mlb_pitcher_daily_features
         WHERE game_date = ? AND pitcher_id = ?
         LIMIT 1
         """,
@@ -69,7 +69,7 @@ def _context(game_date: str, game_id: int) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM game_context_features
+        FROM mlb_game_context_features
         WHERE game_date = ? AND game_id = ?
         LIMIT 1
         """,

@@ -323,7 +323,7 @@ def create_score_run(
         if conn.backend == "postgres":
             cursor = conn.execute(
                 """
-                INSERT INTO score_runs (
+                INSERT INTO mlb_score_runs (
                     run_type, game_date, market, triggered_by, status, started_at, metadata_json, updated_at
                 )
                 VALUES (?, ?, ?, ?, 'started', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
@@ -339,7 +339,7 @@ def create_score_run(
 
         cursor = conn.execute(
             """
-            INSERT INTO score_runs (
+            INSERT INTO mlb_score_runs (
                 run_type, game_date, market, triggered_by, status, started_at, metadata_json, updated_at
             )
             VALUES (?, ?, ?, ?, 'started', CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
@@ -364,7 +364,7 @@ def complete_score_run(
         if metadata is None:
             conn.execute(
                 """
-                UPDATE score_runs
+                UPDATE mlb_score_runs
                 SET status = ?,
                     rows_scored = ?,
                     finished_at = CURRENT_TIMESTAMP,
@@ -376,7 +376,7 @@ def complete_score_run(
         else:
             conn.execute(
                 """
-                UPDATE score_runs
+                UPDATE mlb_score_runs
                 SET status = ?,
                     rows_scored = ?,
                     finished_at = CURRENT_TIMESTAMP,
@@ -412,27 +412,27 @@ def get_status() -> dict:
     """Get row counts for core tables."""
     conn = get_connection()
     tables = [
-        "stadiums",
-        "park_factors",
-        "games",
-        "batter_stats",
-        "pitcher_stats",
-        "weather",
-        "lineups",
-        "umpire_assignments",
-        "hr_odds",
-        "umpires",
-        "hr_model_scores",
-        "market_odds",
-        "market_outcomes",
-        "model_scores",
-        "batter_daily_features",
-        "pitcher_daily_features",
-        "team_daily_features",
-        "game_context_features",
-        "bets",
-        "closing_lines",
-        "score_runs",
+        "mlb_stadiums",
+        "mlb_park_factors",
+        "mlb_games",
+        "mlb_batter_stats",
+        "mlb_pitcher_stats",
+        "mlb_weather",
+        "mlb_lineups",
+        "mlb_umpire_assignments",
+        "mlb_hr_odds",
+        "mlb_umpires",
+        "mlb_hr_model_scores",
+        "mlb_market_odds",
+        "mlb_market_outcomes",
+        "mlb_model_scores",
+        "mlb_batter_daily_features",
+        "mlb_pitcher_daily_features",
+        "mlb_team_daily_features",
+        "mlb_game_context_features",
+        "mlb_bets",
+        "mlb_closing_lines",
+        "mlb_score_runs",
     ]
     status = {}
     try:

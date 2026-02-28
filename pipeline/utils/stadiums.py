@@ -47,6 +47,6 @@ def get_stadium_coords() -> dict:
 def load_stadiums_to_db():
     """Load all stadium data into the database."""
     from db.database import upsert_many
-    count = upsert_many("stadiums", STADIUMS, ["team_abbr"])
+    count = upsert_many("mlb_stadiums", STADIUMS, ["team_abbr"])
     print(f"  🏟️  Loaded {count} stadiums into database")
     return count

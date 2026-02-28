@@ -24,7 +24,7 @@ def _resolve_dates(target_date: str | None, all_dates: bool) -> list[str]:
         rows = query(
             """
             SELECT DISTINCT game_date
-            FROM games
+            FROM mlb_games
             WHERE game_date IS NOT NULL
             ORDER BY game_date
             """

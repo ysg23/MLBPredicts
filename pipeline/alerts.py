@@ -46,7 +46,7 @@ def _top_rows(game_date: str, market: str) -> list[dict[str, Any]]:
         SELECT game_date, market, player_name, team_abbr, side, line, selection_key,
                model_score, edge, signal, confidence_band, sportsbook,
                lineup_confirmed, reasons_json, risk_flags_json
-        FROM model_scores
+        FROM mlb_model_scores
         WHERE game_date = ?
           AND market = ?
           AND COALESCE(is_active, 1) = 1

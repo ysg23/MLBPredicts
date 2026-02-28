@@ -142,7 +142,7 @@ def _get_active_snapshot(game_date: str, game_id: int, team_id: str) -> list[dic
     return query(
         """
         SELECT player_id, batting_order, position, is_starter, confirmed
-        FROM lineups
+        FROM mlb_lineups
         WHERE game_date = ?
           AND game_id = ?
           AND team_id = ?
@@ -156,7 +156,7 @@ def _get_active_snapshot(game_date: str, game_id: int, team_id: str) -> list[dic
 def _deactivate_active_version(conn, game_date: str, game_id: int, team_id: str) -> None:
     conn.execute(
         """
-        UPDATE lineups
+        UPDATE mlb_lineups
         SET active_version = 0,
             updated_at = CURRENT_TIMESTAMP
         WHERE game_date = ?
@@ -185,7 +185,7 @@ def _insert_snapshot(conn, rows: list[dict[str, Any]]) -> int:
         "active_version",
     ]
     placeholders = ", ".join(["?"] * len(cols))
-    sql = f"INSERT INTO lineups ({', '.join(cols)}) VALUES ({placeholders})"
+    sql = f"INSERT INTO mlb_lineups ({', '.join(cols)}) VALUES ({placeholders})"
     payload = [tuple(r.get(c) for c in cols) for r in rows]
     cursor = conn.executemany(sql, payload)
     return cursor.rowcount if cursor.rowcount is not None else len(rows)

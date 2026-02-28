@@ -39,7 +39,7 @@ def _is_game_final(game_id: int) -> bool:
     rows = query(
         """
         SELECT status
-        FROM games
+        FROM mlb_games
         WHERE game_id = ?
         LIMIT 1
         """,

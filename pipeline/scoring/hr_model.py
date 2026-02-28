@@ -51,7 +51,7 @@ def _player_features(game_date: str, player_id: int) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM batter_daily_features
+        FROM mlb_batter_daily_features
         WHERE game_date = ? AND player_id = ?
         LIMIT 1
         """,
@@ -66,7 +66,7 @@ def _pitcher_features(game_date: str, pitcher_id: int | None) -> dict[str, Any] 
     rows = query(
         """
         SELECT *
-        FROM pitcher_daily_features
+        FROM mlb_pitcher_daily_features
         WHERE game_date = ? AND pitcher_id = ?
         LIMIT 1
         """,
@@ -79,7 +79,7 @@ def _context(game_date: str, game_id: int) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM game_context_features
+        FROM mlb_game_context_features
         WHERE game_date = ? AND game_id = ?
         LIMIT 1
         """,
@@ -112,7 +112,7 @@ def _batting_order_for_player(game_date: str, game_id: int, player_id: int) -> t
     rows = query(
         """
         SELECT batting_order, confirmed
-        FROM lineups
+        FROM mlb_lineups
         WHERE game_date = ?
           AND game_id = ?
           AND player_id = ?

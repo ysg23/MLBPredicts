@@ -2,45 +2,45 @@
 -- The Supabase anon key gets read-only access via these policies.
 -- Write operations still require the service_role key (used by the pipeline).
 
--- model_scores: primary dashboard data source
-ALTER TABLE model_scores ENABLE ROW LEVEL SECURITY;
+-- mlb_model_scores: primary dashboard data source
+ALTER TABLE mlb_model_scores ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "dashboard_read_model_scores"
-  ON model_scores FOR SELECT
+  ON mlb_model_scores FOR SELECT
   TO anon
   USING (true);
 
--- games: matchup / game time info
-ALTER TABLE games ENABLE ROW LEVEL SECURITY;
+-- mlb_games: matchup / game time info
+ALTER TABLE mlb_games ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "dashboard_read_games"
-  ON games FOR SELECT
+  ON mlb_games FOR SELECT
   TO anon
   USING (true);
 
--- market_odds: sportsbook odds display
-ALTER TABLE market_odds ENABLE ROW LEVEL SECURITY;
+-- mlb_market_odds: sportsbook odds display
+ALTER TABLE mlb_market_odds ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "dashboard_read_market_odds"
-  ON market_odds FOR SELECT
+  ON mlb_market_odds FOR SELECT
   TO anon
   USING (true);
 
--- bets: performance, bankroll, CLV tabs
-ALTER TABLE bets ENABLE ROW LEVEL SECURITY;
+-- mlb_bets: performance, bankroll, CLV tabs
+ALTER TABLE mlb_bets ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "dashboard_read_bets"
-  ON bets FOR SELECT
+  ON mlb_bets FOR SELECT
   TO anon
   USING (true);
 
--- score_runs: model health / freshness checks
-ALTER TABLE score_runs ENABLE ROW LEVEL SECURITY;
+-- mlb_score_runs: model health / freshness checks
+ALTER TABLE mlb_score_runs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "dashboard_read_score_runs"
-  ON score_runs FOR SELECT
+  ON mlb_score_runs FOR SELECT
   TO anon
   USING (true);
 
--- market_outcomes: grading/settlement display
-ALTER TABLE market_outcomes ENABLE ROW LEVEL SECURITY;
+-- mlb_market_outcomes: grading/settlement display
+ALTER TABLE mlb_market_outcomes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "dashboard_read_market_outcomes"
-  ON market_outcomes FOR SELECT
+  ON mlb_market_outcomes FOR SELECT
   TO anon
   USING (true);
 
@@ -48,31 +48,31 @@ CREATE POLICY "dashboard_read_market_outcomes"
 -- Supabase service_role bypasses RLS by default, but these are explicit
 -- in case the project changes that setting.
 CREATE POLICY "service_full_model_scores"
-  ON model_scores FOR ALL
+  ON mlb_model_scores FOR ALL
   TO service_role
   USING (true) WITH CHECK (true);
 
 CREATE POLICY "service_full_games"
-  ON games FOR ALL
+  ON mlb_games FOR ALL
   TO service_role
   USING (true) WITH CHECK (true);
 
 CREATE POLICY "service_full_market_odds"
-  ON market_odds FOR ALL
+  ON mlb_market_odds FOR ALL
   TO service_role
   USING (true) WITH CHECK (true);
 
 CREATE POLICY "service_full_bets"
-  ON bets FOR ALL
+  ON mlb_bets FOR ALL
   TO service_role
   USING (true) WITH CHECK (true);
 
 CREATE POLICY "service_full_score_runs"
-  ON score_runs FOR ALL
+  ON mlb_score_runs FOR ALL
   TO service_role
   USING (true) WITH CHECK (true);
 
 CREATE POLICY "service_full_market_outcomes"
-  ON market_outcomes FOR ALL
+  ON mlb_market_outcomes FOR ALL
   TO service_role
   USING (true) WITH CHECK (true);

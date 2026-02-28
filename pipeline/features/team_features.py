@@ -41,7 +41,7 @@ def _teams_on_date(game_dt: date) -> dict[str, str | None]:
     rows = query(
         """
         SELECT home_team, away_team
-        FROM games
+        FROM mlb_games
         WHERE game_date = ?
         """,
         (game_dt.strftime("%Y-%m-%d"),),
@@ -61,7 +61,7 @@ def _latest_batter_rows(team_id: str, game_dt: date, window: int) -> list[dict[s
     rows = query(
         """
         SELECT *
-        FROM batter_stats
+        FROM mlb_batter_stats
         WHERE team = ?
           AND window_days = ?
           AND stat_date < ?
@@ -82,7 +82,7 @@ def _runs_per_game(team_id: str, game_dt: date, window_days: int) -> float | Non
     rows = query(
         """
         SELECT home_team, away_team, home_score, away_score
-        FROM games
+        FROM mlb_games
         WHERE game_date >= ?
           AND game_date < ?
           AND status = 'final'
@@ -190,7 +190,7 @@ def _latest_pitcher_rows(team_id: str, game_dt: date, window: int = 14) -> list[
     rows = query(
         """
         SELECT *
-        FROM pitcher_stats
+        FROM mlb_pitcher_stats
         WHERE team = ?
           AND window_days = ?
           AND stat_date < ?
@@ -335,7 +335,7 @@ def build_team_daily_features(game_date: date | str) -> dict[str, Any]:
     upserted = 0
     for batch in _chunked(rows, size=MAX_BATCH_SIZE):
         upserted += upsert_many(
-            "team_daily_features",
+            "mlb_team_daily_features",
             batch,
             conflict_cols=["game_date", "team_id"],
         )

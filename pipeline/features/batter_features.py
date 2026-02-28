@@ -45,7 +45,7 @@ def _query_distinct_lineup_batters(game_dt: date) -> dict[int, str | None]:
     rows = query(
         """
         SELECT DISTINCT player_id, team_id
-        FROM lineups
+        FROM mlb_lineups
         WHERE game_date = ?
           AND player_id IS NOT NULL
           AND COALESCE(active_version, 1) = 1
@@ -59,7 +59,7 @@ def _query_distinct_odds_batters(game_dt: date) -> dict[int, str | None]:
     rows = query(
         """
         SELECT DISTINCT player_id, team_id
-        FROM market_odds
+        FROM mlb_market_odds
         WHERE game_date = ?
           AND entity_type = 'batter'
           AND player_id IS NOT NULL
@@ -73,7 +73,7 @@ def _query_game_teams(game_dt: date) -> list[str]:
     rows = query(
         """
         SELECT home_team AS team_id, away_team AS opp_id
-        FROM games
+        FROM mlb_games
         WHERE game_date = ?
         """,
         (game_dt.strftime("%Y-%m-%d"),),
@@ -96,7 +96,7 @@ def _query_recent_team_batters(game_dt: date, seasons_back: int) -> dict[int, st
     placeholders = ", ".join(["?"] * len(teams))
     sql = f"""
         SELECT DISTINCT player_id, team
-        FROM batter_stats
+        FROM mlb_batter_stats
         WHERE stat_date >= ?
           AND stat_date < ?
           AND team IN ({placeholders})
@@ -112,7 +112,7 @@ def _query_recent_lineup_slot(player_id: int, game_dt: date) -> int | None:
     rows = query(
         """
         SELECT batting_order, COUNT(*) as cnt
-        FROM lineups
+        FROM mlb_lineups
         WHERE player_id = ?
           AND game_date < ?
           AND batting_order IS NOT NULL
@@ -163,7 +163,7 @@ def _query_latest_windows(
     placeholders = ", ".join(["?"] * len(player_ids))
     sql = f"""
         SELECT *
-        FROM batter_stats
+        FROM mlb_batter_stats
         WHERE stat_date >= ?
           AND stat_date < ?
           AND window_days IN (7, 14, 30)
@@ -391,7 +391,7 @@ def build_batter_daily_features(game_date: date | str, seasons_back: int = 3) ->
     upserted = 0
     for batch in _chunked(rows, size=MAX_BATCH_SIZE):
         upserted += upsert_many(
-            "batter_daily_features",
+            "mlb_batter_daily_features",
             batch,
             conflict_cols=["game_date", "player_id"],
         )

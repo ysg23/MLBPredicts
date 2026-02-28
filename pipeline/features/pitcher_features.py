@@ -41,7 +41,7 @@ def _probable_starters(game_dt: date) -> dict[int, dict[str, Any]]:
     rows = query(
         """
         SELECT home_pitcher_id, away_pitcher_id, home_team, away_team
-        FROM games
+        FROM mlb_games
         WHERE game_date = ?
         """,
         (game_dt.strftime("%Y-%m-%d"),),
@@ -70,7 +70,7 @@ def _latest_pitcher_windows(
     placeholders = ", ".join(["?"] * len(pitcher_ids))
     sql = f"""
         SELECT *
-        FROM pitcher_stats
+        FROM mlb_pitcher_stats
         WHERE stat_date < ?
           AND window_days IN (14, 30)
           AND player_id IN ({placeholders})
@@ -279,7 +279,7 @@ def build_pitcher_daily_features(game_date: date | str) -> dict[str, Any]:
     upserted = 0
     for batch in _chunked(rows, size=MAX_BATCH_SIZE):
         upserted += upsert_many(
-            "pitcher_daily_features",
+            "mlb_pitcher_daily_features",
             batch,
             conflict_cols=["game_date", "pitcher_id"],
         )

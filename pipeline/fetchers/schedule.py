@@ -13,7 +13,7 @@ from db.database import upsert_many, query
 
 def _lookup_stadium_ids() -> dict[str, int]:
     """Build a team_abbr -> stadium_id map from the stadiums table."""
-    rows = query("SELECT stadium_id, team_abbr FROM stadiums WHERE team_abbr IS NOT NULL")
+    rows = query("SELECT stadium_id, team_abbr FROM mlb_stadiums WHERE team_abbr IS NOT NULL")
     return {str(r["team_abbr"]): int(r["stadium_id"]) for r in rows}
 
 
@@ -131,7 +131,7 @@ def fetch_todays_games(date: str = None) -> list[dict]:
         if g["away_pitcher_id"] and g["away_pitcher_id"] in hand_map:
             g["away_pitcher_hand"] = hand_map[g["away_pitcher_id"]]
 
-    count = upsert_many("games", games, ["game_id"])
+    count = upsert_many("mlb_games", games, ["game_id"])
     print(f"  ✅ {len(games)} games found, {count} inserted/updated")
     return games
 

@@ -43,7 +43,7 @@ def _get_pitcher_features(game_date: str, pitcher_id: int) -> dict[str, Any] | N
     rows = query(
         """
         SELECT *
-        FROM pitcher_daily_features
+        FROM mlb_pitcher_daily_features
         WHERE game_date = ? AND pitcher_id = ?
         LIMIT 1
         """,
@@ -58,7 +58,7 @@ def _get_team_features(game_date: str, team_id: str | None) -> dict[str, Any] | 
     rows = query(
         """
         SELECT *
-        FROM team_daily_features
+        FROM mlb_team_daily_features
         WHERE game_date = ? AND team_id = ?
         LIMIT 1
         """,
@@ -71,7 +71,7 @@ def _get_context(game_date: str, game_id: int) -> dict[str, Any] | None:
     rows = query(
         """
         SELECT *
-        FROM game_context_features
+        FROM mlb_game_context_features
         WHERE game_date = ? AND game_id = ?
         LIMIT 1
         """,
@@ -84,7 +84,7 @@ def _all_pitcher_k_values(game_date: str) -> list[float]:
     rows = query(
         """
         SELECT k_pct_14 AS v
-        FROM pitcher_daily_features
+        FROM mlb_pitcher_daily_features
         WHERE game_date = ? AND k_pct_14 IS NOT NULL
         """,
         (game_date,),
@@ -96,7 +96,7 @@ def _all_pitcher_whiff_values(game_date: str) -> list[float]:
     rows = query(
         """
         SELECT whiff_pct_14 AS v
-        FROM pitcher_daily_features
+        FROM mlb_pitcher_daily_features
         WHERE game_date = ? AND whiff_pct_14 IS NOT NULL
         """,
         (game_date,),

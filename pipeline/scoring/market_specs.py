@@ -53,7 +53,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "HR": MarketSpec(
         market="HR",
         entity_type="batter",
-        required_feature_tables=("batter_daily_features", "pitcher_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_batter_daily_features", "mlb_pitcher_daily_features", "mlb_game_context_features"),
         output_type="probability",
         edge_method="probability_vs_implied",
         thresholds=CONSERVATIVE_THRESHOLDS,
@@ -63,7 +63,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "K": MarketSpec(
         market="K",
         entity_type="pitcher",
-        required_feature_tables=("pitcher_daily_features", "team_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_pitcher_daily_features", "mlb_team_daily_features", "mlb_game_context_features"),
         output_type="hybrid",
         edge_method="hybrid",
         thresholds=DEFAULT_THRESHOLDS,
@@ -73,7 +73,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "HITS_1P": MarketSpec(
         market="HITS_1P",
         entity_type="batter",
-        required_feature_tables=("batter_daily_features", "pitcher_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_batter_daily_features", "mlb_pitcher_daily_features", "mlb_game_context_features"),
         output_type="probability",
         edge_method="probability_vs_implied",
         thresholds=AGGRESSIVE_THRESHOLDS,
@@ -83,7 +83,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "HITS_LINE": MarketSpec(
         market="HITS_LINE",
         entity_type="batter",
-        required_feature_tables=("batter_daily_features", "pitcher_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_batter_daily_features", "mlb_pitcher_daily_features", "mlb_game_context_features"),
         output_type="hybrid",
         edge_method="hybrid",
         thresholds=DEFAULT_THRESHOLDS,
@@ -93,7 +93,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "TB_LINE": MarketSpec(
         market="TB_LINE",
         entity_type="batter",
-        required_feature_tables=("batter_daily_features", "pitcher_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_batter_daily_features", "mlb_pitcher_daily_features", "mlb_game_context_features"),
         output_type="hybrid",
         edge_method="hybrid",
         thresholds=DEFAULT_THRESHOLDS,
@@ -103,7 +103,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "OUTS_RECORDED": MarketSpec(
         market="OUTS_RECORDED",
         entity_type="pitcher",
-        required_feature_tables=("pitcher_daily_features", "team_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_pitcher_daily_features", "mlb_team_daily_features", "mlb_game_context_features"),
         output_type="projection",
         edge_method="projection_vs_line",
         thresholds=DEFAULT_THRESHOLDS,
@@ -113,7 +113,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "ML": MarketSpec(
         market="ML",
         entity_type="game",
-        required_feature_tables=("pitcher_daily_features", "team_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_pitcher_daily_features", "mlb_team_daily_features", "mlb_game_context_features"),
         output_type="probability",
         edge_method="probability_vs_implied",
         thresholds=DEFAULT_THRESHOLDS,
@@ -123,7 +123,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "TOTAL": MarketSpec(
         market="TOTAL",
         entity_type="game",
-        required_feature_tables=("pitcher_daily_features", "team_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_pitcher_daily_features", "mlb_team_daily_features", "mlb_game_context_features"),
         output_type="projection",
         edge_method="projection_vs_line",
         thresholds=DEFAULT_THRESHOLDS,
@@ -133,7 +133,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "F5_ML": MarketSpec(
         market="F5_ML",
         entity_type="game",
-        required_feature_tables=("pitcher_daily_features", "team_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_pitcher_daily_features", "mlb_team_daily_features", "mlb_game_context_features"),
         output_type="probability",
         edge_method="probability_vs_implied",
         thresholds=DEFAULT_THRESHOLDS,
@@ -143,7 +143,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "F5_TOTAL": MarketSpec(
         market="F5_TOTAL",
         entity_type="game",
-        required_feature_tables=("pitcher_daily_features", "team_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_pitcher_daily_features", "mlb_team_daily_features", "mlb_game_context_features"),
         output_type="projection",
         edge_method="projection_vs_line",
         thresholds=DEFAULT_THRESHOLDS,
@@ -153,7 +153,7 @@ MARKET_SPECS: dict[str, MarketSpec] = {
     "TEAM_TOTAL": MarketSpec(
         market="TEAM_TOTAL",
         entity_type="team",
-        required_feature_tables=("team_daily_features", "pitcher_daily_features", "game_context_features"),
+        required_feature_tables=("mlb_team_daily_features", "mlb_pitcher_daily_features", "mlb_game_context_features"),
         output_type="projection",
         edge_method="projection_vs_line",
         thresholds=DEFAULT_THRESHOLDS,

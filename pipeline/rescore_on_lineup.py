@@ -81,7 +81,7 @@ def _detect_changed_lineup_pairs(
     rows = query(
         f"""
         SELECT game_id, team_id, fetched_at, confirmed, player_id, batting_order, position, is_starter
-        FROM lineups
+        FROM mlb_lineups
         WHERE {where_sql}
         ORDER BY game_id, team_id, fetched_at DESC, batting_order, player_id
         """,
@@ -140,7 +140,7 @@ def _deactivate_market_rows(game_date: str, game_id: int, market: str) -> int:
     try:
         cursor = conn.execute(
             """
-            UPDATE model_scores
+            UPDATE mlb_model_scores
             SET is_active = 0,
                 updated_at = CURRENT_TIMESTAMP
             WHERE game_date = ?
@@ -187,7 +187,7 @@ def _score_one_market_for_games(
         for row in rows:
             row["score_run_id"] = score_run_id
             row["is_active"] = 1
-        rows_written += int(insert_many("model_scores", rows))
+        rows_written += int(insert_many("mlb_model_scores", rows))
         games_scored += 1
 
     return {

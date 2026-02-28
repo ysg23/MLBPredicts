@@ -201,6 +201,6 @@ def fetch_game_weather(games: list[dict], stadium_coords: dict) -> list[dict]:
         except Exception as e:
             print(f"  ❌ {team}: weather fetch failed — {e}")
 
-    count = upsert_many("weather", weather_rows, ["game_id", "fetch_time"])
+    count = upsert_many("mlb_weather", weather_rows, ["game_id", "fetch_time"])
     print(f"  💾 Saved {len(weather_rows)} weather records")
     return weather_rows

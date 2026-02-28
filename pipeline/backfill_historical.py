@@ -74,41 +74,41 @@ def _iter_dates(start_date: str, end_date: str):
 # ---------------------------------------------------------------------------
 
 def _has_games(game_date: str) -> bool:
-    rows = query("SELECT COUNT(*) AS cnt FROM games WHERE game_date = ?", (game_date,))
+    rows = query("SELECT COUNT(*) AS cnt FROM mlb_games WHERE game_date = ?", (game_date,))
     return bool(rows and int(rows[0].get("cnt", 0)) > 0)
 
 
 def _has_batter_stats(game_date: str) -> bool:
-    rows = query("SELECT COUNT(*) AS cnt FROM batter_stats WHERE stat_date = ?", (game_date,))
+    rows = query("SELECT COUNT(*) AS cnt FROM mlb_batter_stats WHERE stat_date = ?", (game_date,))
     return bool(rows and int(rows[0].get("cnt", 0)) > 0)
 
 
 def _has_pitcher_stats(game_date: str) -> bool:
-    rows = query("SELECT COUNT(*) AS cnt FROM pitcher_stats WHERE stat_date = ?", (game_date,))
+    rows = query("SELECT COUNT(*) AS cnt FROM mlb_pitcher_stats WHERE stat_date = ?", (game_date,))
     return bool(rows and int(rows[0].get("cnt", 0)) > 0)
 
 
 def _has_features(game_date: str) -> bool:
-    rows = query("SELECT COUNT(*) AS cnt FROM batter_daily_features WHERE game_date = ?", (game_date,))
+    rows = query("SELECT COUNT(*) AS cnt FROM mlb_batter_daily_features WHERE game_date = ?", (game_date,))
     return bool(rows and int(rows[0].get("cnt", 0)) > 0)
 
 
 def _has_scores(game_date: str) -> bool:
     rows = query(
-        "SELECT COUNT(*) AS cnt FROM model_scores WHERE game_date = ? AND COALESCE(is_active, 1) = 1",
+        "SELECT COUNT(*) AS cnt FROM mlb_model_scores WHERE game_date = ? AND COALESCE(is_active, 1) = 1",
         (game_date,),
     )
     return bool(rows and int(rows[0].get("cnt", 0)) > 0)
 
 
 def _has_grades(game_date: str) -> bool:
-    rows = query("SELECT COUNT(*) AS cnt FROM market_outcomes WHERE game_date = ?", (game_date,))
+    rows = query("SELECT COUNT(*) AS cnt FROM mlb_market_outcomes WHERE game_date = ?", (game_date,))
     return bool(rows and int(rows[0].get("cnt", 0)) > 0)
 
 
 def _get_pitcher_ids(game_date: str) -> list[int]:
     games = query(
-        "SELECT home_pitcher_id, away_pitcher_id FROM games WHERE game_date = ?",
+        "SELECT home_pitcher_id, away_pitcher_id FROM mlb_games WHERE game_date = ?",
         (game_date,),
     )
     ids: list[int] = []
@@ -168,7 +168,7 @@ def _process_day(
             if bulk_df is not None:
                 # Fast path: slice in-memory bulk DataFrame
                 batter_rows = compute_batter_stats_for_date(bulk_df, game_date)
-                count = upsert_many("batter_stats", batter_rows, ["player_id", "stat_date", "window_days"])
+                count = upsert_many("mlb_batter_stats", batter_rows, ["player_id", "stat_date", "window_days"])
                 day_summary["batter_rows"] = count
             else:
                 batter_rows = fetch_daily_batter_stats(as_of_date=game_date) or []

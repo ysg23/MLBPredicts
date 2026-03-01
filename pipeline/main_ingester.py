@@ -69,77 +69,99 @@ def _safe_run(name: str, fn, *args, **kwargs):
 
 def job_statcast():
     """Fetch yesterday's Statcast batter/pitcher stats (~5:30 AM ET daily)."""
+    from db.pipeline_monitor import pipeline_run, update_source_health
     date = _yesterday_et()
     log.info("fetching statcast for %s", date)
-    from fetchers.statcast import fetch_daily_batter_stats
-    from fetchers.pitchers import fetch_daily_pitcher_stats
-    from fetchers.schedule import fetch_todays_games
-    fetch_daily_batter_stats()
-    games = fetch_todays_games(date)
-    pitcher_ids = [
-        pid for g in games
-        for pid in [g.get("home_pitcher_id"), g.get("away_pitcher_id")]
-        if pid
-    ]
-    if pitcher_ids:
-        fetch_daily_pitcher_stats(pitcher_ids, as_of_date=date)
-        log.info("fetched pitcher stats for %d pitchers", len(pitcher_ids))
+    with pipeline_run("statcast_fetch", service_name="mlb-data-ingester", source="statcast"):
+        from fetchers.statcast import fetch_daily_batter_stats
+        from fetchers.pitchers import fetch_daily_pitcher_stats
+        from fetchers.schedule import fetch_todays_games
+        fetch_daily_batter_stats()
+        games = fetch_todays_games(date)
+        pitcher_ids = [
+            pid for g in games
+            for pid in [g.get("home_pitcher_id"), g.get("away_pitcher_id")]
+            if pid
+        ]
+        if pitcher_ids:
+            fetch_daily_pitcher_stats(pitcher_ids, as_of_date=date)
+            log.info("fetched pitcher stats for %d pitchers", len(pitcher_ids))
+        update_source_health("statcast", success=True)
 
 
 def job_schedule():
     """Fetch today's schedule + umpire assignments (~7:00 AM ET)."""
+    from db.pipeline_monitor import pipeline_run, update_source_health
     date = _today_et()
     log.info("fetching schedule + umpires for %s", date)
-    from fetchers.schedule import fetch_todays_games, fetch_umpire_assignments
-    games = fetch_todays_games(date)
-    if games:
-        umpires = fetch_umpire_assignments(date)
-        log.info("schedule: %d games, %d umpire assignments", len(games), len(umpires))
-    else:
-        log.info("no games today (%s)", date)
+    with pipeline_run("schedule_fetch", service_name="mlb-data-ingester", source="mlb_stats_api") as run:
+        from fetchers.schedule import fetch_todays_games, fetch_umpire_assignments
+        games = fetch_todays_games(date)
+        if games:
+            umpires = fetch_umpire_assignments(date)
+            log.info("schedule: %d games, %d umpire assignments", len(games), len(umpires))
+            run.records_processed = len(games)
+        else:
+            log.info("no games today (%s)", date)
+        update_source_health("mlb_stats_api", success=True)
 
 
 def job_lineups():
     """Fetch lineup snapshots (~8:30 AM, 12:00 PM, 4:00 PM ET on game days)."""
     if not _is_game_day():
         return
+    from db.pipeline_monitor import pipeline_run, update_source_health
     date = _today_et()
     log.info("fetching lineups for %s", date)
-    from fetchers.lineups import fetch_lineups_for_date
-    result = fetch_lineups_for_date(date)
-    log.info("lineups: %s", result)
+    with pipeline_run("lineup_fetch", service_name="mlb-data-ingester", source="mlb_stats_api") as run:
+        from fetchers.lineups import fetch_lineups_for_date
+        result = fetch_lineups_for_date(date)
+        log.info("lineups: %s", result)
+        if isinstance(result, dict):
+            run.records_processed = result.get("rows_upserted", 0)
+        update_source_health("mlb_stats_api", success=True)
 
 
 def job_weather():
     """Fetch weather for today's games (~8:00 AM, 2:00 PM, 5:00 PM ET on game days)."""
     if not _is_game_day():
         return
+    from db.pipeline_monitor import pipeline_run, update_source_health
     date = _today_et()
     log.info("fetching weather for %s", date)
-    from fetchers.schedule import fetch_todays_games
-    from fetchers.weather import fetch_game_weather
-    from utils.stadiums import get_stadium_coords
-    games = fetch_todays_games(date)
-    if games:
-        coords = get_stadium_coords()
-        fetch_game_weather(games, coords)
+    with pipeline_run("weather_fetch", service_name="mlb-data-ingester", source="weather_api") as run:
+        from fetchers.schedule import fetch_todays_games
+        from fetchers.weather import fetch_game_weather
+        from utils.stadiums import get_stadium_coords
+        games = fetch_todays_games(date)
+        if games:
+            coords = get_stadium_coords()
+            fetch_game_weather(games, coords)
+            run.records_processed = len(games)
+        update_source_health("weather_api", success=True)
 
 
 def job_odds():
     """Fetch odds for today's markets (~9:00 AM, 12:00 PM, 3:00 PM ET on game days)."""
     if not _is_game_day():
         return
+    from db.pipeline_monitor import pipeline_run, update_source_health
     log.info("fetching odds")
-    from fetchers.odds import fetch_hr_props
-    fetch_hr_props()
+    with pipeline_run("odds_fetch", service_name="mlb-data-ingester", source="odds_api"):
+        from fetchers.odds import fetch_hr_props
+        fetch_hr_props()
+        update_source_health("odds_api", success=True)
 
 
 def job_outcomes():
     """Fetch post-game outcomes for yesterday's games (~12:00 AM ET)."""
+    from db.pipeline_monitor import pipeline_run, update_source_health
     date = _yesterday_et()
     log.info("fetching post-game outcomes for %s", date)
-    from grade_results import run_grading
-    run_grading(date)
+    with pipeline_run("outcomes_fetch", service_name="mlb-data-ingester", source="mlb_stats_api"):
+        from grade_results import run_grading
+        run_grading(date)
+        update_source_health("mlb_stats_api", success=True)
 
 
 def run_daily_ingest(date: str | None = None):

@@ -112,6 +112,118 @@ def _outcome_index(outcomes: list[dict[str, Any]]) -> tuple[dict[tuple[Any, ...]
     return by_selection, by_shape
 
 
+_SETTLEMENT_TO_RESULT: dict[str, str] = {
+    "win": "win",
+    "loss": "loss",
+    "push": "push",
+    "void": "void",
+    "no_action": "void",
+}
+
+
+def _normalize_result(settlement: str) -> str:
+    """Map a raw settlement string to the canonical result column value."""
+    return _SETTLEMENT_TO_RESULT.get(settlement.lower(), "pending")
+
+
+def _update_model_score_results(
+    game_date: str,
+    selections: list[dict[str, Any]],
+    outcomes: list[dict[str, Any]],
+) -> int:
+    """
+    After outcomes are graded, back-fill result / actual_value / graded_at on
+    every matching mlb_model_scores row.
+
+    Returns the number of rows updated.
+    """
+    # Only process rows that originally came from mlb_model_scores (they have
+    # game_date set and are fully identified by the WHERE clause below).
+    model_selections = [
+        s for s in selections
+        if str(s.get("market") or "").upper() in SUPPORTED_MARKETS
+    ]
+    if not model_selections or not outcomes:
+        return 0
+
+    by_selection, by_shape = _outcome_index(outcomes)
+
+    conn = get_connection()
+    updated = 0
+    try:
+        for sel in model_selections:
+            market = str(sel.get("market") or "").upper()
+            game_id = sel.get("game_id")
+
+            # Match outcome using selection_key first, then shape fallback.
+            matched: dict[str, Any] | None = None
+            selection_key = sel.get("selection_key")
+            if selection_key:
+                matched = by_selection.get((market, game_id, selection_key))
+            if matched is None:
+                shape_key = (
+                    market,
+                    game_id,
+                    sel.get("player_id"),
+                    sel.get("team_id"),
+                    sel.get("bet_type"),
+                    sel.get("line"),
+                    sel.get("side"),
+                )
+                matched = by_shape.get(shape_key)
+
+            if matched is None:
+                continue
+
+            settlement = settle_selection(
+                market=market,
+                side=sel.get("side"),
+                line=sel.get("line"),
+                outcome_value=matched.get("outcome_value"),
+                bet_type=sel.get("bet_type"),
+            )
+            result_val = _normalize_result(settlement)
+            actual_value = matched.get("outcome_value")
+
+            conn.execute(
+                """
+                UPDATE mlb_model_scores
+                SET result = ?,
+                    actual_value = ?,
+                    graded_at = CURRENT_TIMESTAMP
+                WHERE game_date = ?
+                  AND market = ?
+                  AND game_id = ?
+                  AND player_id IS NOT DISTINCT FROM ?
+                  AND team_abbr IS NOT DISTINCT FROM ?
+                  AND bet_type = ?
+                  AND line IS NOT DISTINCT FROM ?
+                  AND COALESCE(is_active, 1) = 1
+                """,
+                (
+                    result_val,
+                    actual_value,
+                    game_date,
+                    market,
+                    game_id,
+                    sel.get("player_id"),
+                    sel.get("team_abbr"),
+                    sel.get("bet_type"),
+                    sel.get("line"),
+                ),
+            )
+            if isinstance(conn.raw.rowcount if hasattr(conn.raw, "rowcount") else None, int):
+                updated += max(0, conn.raw.rowcount)
+            else:
+                updated += 1
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return updated
+
+
 def _settle_bets(game_date: str, outcomes: list[dict[str, Any]]) -> dict[str, int]:
     pending_bets = query(
         """
@@ -194,6 +306,7 @@ def grade_results_for_date(game_date: str) -> dict[str, Any]:
     game_outcomes = grade_game_market_outcomes(selections)
     all_outcomes = player_outcomes + game_outcomes
     upserted = _upsert_outcomes(all_outcomes)
+    model_scores_updated = _update_model_score_results(game_date, selections, all_outcomes)
     closing_capture = capture_closing_lines_for_date(game_date)
     clv_update = update_bet_clv_for_date(game_date)
     settle_summary = _settle_bets(game_date, all_outcomes)
@@ -203,6 +316,7 @@ def grade_results_for_date(game_date: str) -> dict[str, Any]:
         "player_outcomes": len(player_outcomes),
         "game_outcomes": len(game_outcomes),
         "outcomes_upserted": upserted,
+        "model_scores_updated": model_scores_updated,
         "closing_groups": closing_capture.get("groups", 0),
         "closing_upserted": closing_capture.get("upserted", 0),
         "bets_clv_updated": clv_update.get("updated", 0),

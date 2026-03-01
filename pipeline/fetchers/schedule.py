@@ -4,11 +4,43 @@ MLB Schedule & Lineup Fetcher.
 Uses the free MLB Stats API (statsapi.mlb.com) — no auth required.
 Pulls today's games, probable pitchers, and lineup data.
 """
+import json
+import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import MLB_STATS_BASE, TEAM_ABBRS
 from db.database import upsert_many, query
+
+log = logging.getLogger(__name__)
+
+
+def _cache_response(source: str, endpoint: str, params_dict: dict, body_dict: dict) -> None:
+    """Best-effort INSERT of a raw API response into raw_api_responses. Never raises."""
+    try:
+        from db.database import get_connection
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT INTO raw_api_responses (source, endpoint, params, response_body, fetched_at, ttl_hours)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    source,
+                    endpoint,
+                    json.dumps(params_dict),
+                    json.dumps(body_dict),
+                    datetime.now(timezone.utc).isoformat(),
+                    24,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.debug("raw_api_responses cache write failed (non-fatal): %s", exc)
 
 
 def _lookup_stadium_ids() -> dict[str, int]:
@@ -68,6 +100,8 @@ def fetch_todays_games(date: str = None) -> list[dict]:
     resp = requests.get(url, params=params, timeout=15)
     resp.raise_for_status()
     data = resp.json()
+
+    _cache_response("mlb_stats_api", "/schedule", params, data)
 
     # Lookup stadium_id by home team abbreviation
     stadium_map = _lookup_stadium_ids()

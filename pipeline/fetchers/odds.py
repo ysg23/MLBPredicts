@@ -7,6 +7,8 @@ Outputs:
 """
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +22,36 @@ from utils.odds_normalizer import (
     american_to_implied_prob,
     normalize_event_odds,
 )
+
+log = logging.getLogger(__name__)
+
+
+def _cache_response(source: str, endpoint: str, params_dict: dict, body_dict: dict) -> None:
+    """Best-effort INSERT of a raw API response into raw_api_responses. Never raises."""
+    try:
+        from db.database import get_connection as _get_conn
+        conn = _get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO raw_api_responses (source, endpoint, params, response_body, fetched_at, ttl_hours)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    source,
+                    endpoint,
+                    json.dumps(params_dict),
+                    json.dumps(body_dict),
+                    datetime.now(timezone.utc).isoformat(),
+                    1,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.debug("raw_api_responses cache write failed (non-fatal): %s", exc)
 
 
 def _event_game_date(event_payload: dict[str, Any]) -> str:
@@ -219,19 +251,26 @@ def fetch_hr_props(sport: str = "baseball_mlb") -> list[dict]:
 
         try:
             odds_url = f"{ODDS_API_BASE}/sports/{sport}/events/{event_id}/odds"
+            odds_params = {
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": markets_param,
+                "dateFormat": "iso",
+                "oddsFormat": "american",
+            }
             odds_resp = requests.get(
                 odds_url,
-                params={
-                    "apiKey": ODDS_API_KEY,
-                    "regions": "us",
-                    "markets": markets_param,
-                    "dateFormat": "iso",
-                    "oddsFormat": "american",
-                },
+                params=odds_params,
                 timeout=15,
             )
             odds_resp.raise_for_status()
             event_odds = odds_resp.json()
+            _cache_response(
+                "odds_api",
+                f"/sports/{sport}/events/{event_id}/odds",
+                {k: v for k, v in odds_params.items() if k != "apiKey"},
+                event_odds,
+            )
         except Exception as exc:
             print(f"  ⚠️  Could not fetch odds for event {event_id}: {exc}")
             continue

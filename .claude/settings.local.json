@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(pip show pandas)",
+      "Bash(echo found venv:*)",
+      "Bash(git status:*)",
+      "Bash(vercel whoami:*)",
+      "Bash(npm install:*)",
+      "Bash(vercel:*)"
+    ]
+  }
+}

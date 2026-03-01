@@ -6,9 +6,11 @@ HR impact multiplier based on wind relative to stadium orientation.
 
 Uses OpenWeatherMap free tier (1000 calls/day).
 """
-import requests
+import json
+import logging
 import math
-from datetime import datetime
+import requests
+from datetime import datetime, timezone
 
 from config import (WEATHER_API_BASE, WEATHER_API_KEY,
                     WIND_OUT_MULTIPLIER, WIND_IN_MULTIPLIER,
@@ -16,6 +18,36 @@ from config import (WEATHER_API_BASE, WEATHER_API_KEY,
                     TEMP_COLD_THRESHOLD, TEMP_HOT_MULTIPLIER,
                     TEMP_COLD_MULTIPLIER)
 from db.database import upsert_many, query
+
+log = logging.getLogger(__name__)
+
+
+def _cache_response(source: str, endpoint: str, params_dict: dict, body_dict: dict) -> None:
+    """Best-effort INSERT of a raw API response into raw_api_responses. Never raises."""
+    try:
+        from db.database import get_connection
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT INTO raw_api_responses (source, endpoint, params, response_body, fetched_at, ttl_hours)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    source,
+                    endpoint,
+                    json.dumps(params_dict),
+                    json.dumps(body_dict),
+                    datetime.now(timezone.utc).isoformat(),
+                    3,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.debug("raw_api_responses cache write failed (non-fatal): %s", exc)
 
 
 # Stadium orientations: degrees from home plate to center field
@@ -162,14 +194,21 @@ def fetch_game_weather(games: list[dict], stadium_coords: dict) -> list[dict]:
             continue
 
         try:
-            resp = requests.get(f"{WEATHER_API_BASE}/weather", params={
+            weather_params = {
                 "lat": coords[0],
                 "lon": coords[1],
                 "appid": WEATHER_API_KEY,
                 "units": "imperial",
-            }, timeout=10)
+            }
+            resp = requests.get(f"{WEATHER_API_BASE}/weather", params=weather_params, timeout=10)
             resp.raise_for_status()
             w = resp.json()
+            _cache_response(
+                "weather_api",
+                "/weather",
+                {k: v for k, v in weather_params.items() if k != "appid"},
+                w,
+            )
 
             temp = w["main"]["temp"]
             humidity = w["main"]["humidity"]

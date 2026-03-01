@@ -59,15 +59,18 @@ def _safe_run(name: str, fn, *args, **kwargs):
 
 def job_build_features(date: str | None = None):
     """Build all four feature tables for the given date."""
+    from db.pipeline_monitor import pipeline_run
     date = date or _today_et()
     if not _is_game_day(date):
         log.info("no games on %s — skipping feature build", date)
         return
     log.info("building features for %s", date)
-    from build_features import run_build_features
-    results = run_build_features(date=date)
-    total = sum(int(r.get("rows_upserted_total", 0)) for r in results)
-    log.info("feature build complete: %d rows upserted across %d tables", total, len(results))
+    with pipeline_run("build_features", service_name="mlb-feature-engine") as run:
+        from build_features import run_build_features
+        results = run_build_features(date=date)
+        total = sum(int(r.get("rows_upserted_total", 0)) for r in results)
+        run.records_processed = total
+        log.info("feature build complete: %d rows upserted across %d tables", total, len(results))
 
 
 # ── Scheduler ────────────────────────────────────────────────────────────────

@@ -8,3 +8,5 @@ uvicorn[standard]
 psycopg[binary]
 schedule
 pytz
+slowapi
+python-jose[cryptography]

@@ -75,7 +75,11 @@ def _postgres_url_hint(postgres_url: str) -> str | None:
                 "(e.g. '@' -> '%40')."
             )
 
-    if "supabase.co" in parsed.netloc and not parsed.hostname.startswith("db."):
+    if (
+        "supabase.co" in parsed.netloc
+        and not parsed.hostname.startswith("db.")
+        and "pooler.supabase" not in parsed.hostname
+    ):
         return (
             "Supabase direct DB host usually starts with 'db.' (Direct connection string), "
             "not the project API host."

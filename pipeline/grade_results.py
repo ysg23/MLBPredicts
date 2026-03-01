@@ -324,6 +324,10 @@ def grade_results_for_date(game_date: str) -> dict[str, Any]:
     }
 
 
+# Alias used by main_ingester.py and main_scoring.py
+run_grading = grade_results_for_date
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Grade market outcomes and settle bets")
     parser.add_argument("--date", type=str, help="Target date YYYY-MM-DD (defaults to today)")

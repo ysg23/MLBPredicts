@@ -16,6 +16,7 @@ from .base_engine import (
     assign_signal,
     build_reasons,
     build_risk_flags,
+    clamp,
     get_batter_universe,
     get_market_odds_rows,
     probability_edge_pct,
@@ -255,8 +256,27 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
             order_scores = {1: 72, 2: 78, 3: 82, 4: 78, 5: 68, 6: 58, 7: 45, 8: 35, 9: 28}
             batting_order_score = float(order_scores.get(batting_order or 5, 50))
             context_score = 50.0 + ((weather_temp - 70.0) * 0.7 if weather_temp is not None else 0.0)
-            platoon_fit_score = 50.0
-            hot_cold_score = 50.0 + (hot_cold_delta * 220.0)
+
+            # Platoon fit: relative hit-rate advantage against the facing pitcher's hand
+            pitcher_hand = game.away_pitcher_hand if batting_team == game.home_team else game.home_pitcher_hand
+            hit_rate_vs_lhp = _to_float(player_features.get("hit_rate_vs_lhp"))
+            hit_rate_vs_rhp = _to_float(player_features.get("hit_rate_vs_rhp"))
+            if pitcher_hand is not None:
+                split_rate = hit_rate_vs_lhp if pitcher_hand == "L" else hit_rate_vs_rhp
+                other_rate = hit_rate_vs_rhp if pitcher_hand == "L" else hit_rate_vs_lhp
+                avg_rate = (split_rate + other_rate) / 2 if (split_rate and other_rate) else None
+                if avg_rate and avg_rate > 0:
+                    advantage = (split_rate - avg_rate) / avg_rate
+                    platoon_fit_score = clamp(50.0 + advantage * 150.0, 20.0, 80.0)
+                else:
+                    platoon_fit_score = 50.0
+            else:
+                platoon_fit_score = 50.0
+
+            # Hot/cold: normalized relative slope — avoids penalizing high-baseline hitters
+            _hr30_base = hit_rate_30 if hit_rate_30 is not None else 0.25
+            _relative_slope = hot_cold_delta / max(_hr30_base, 0.05)
+            hot_cold_score = clamp(50.0 + _relative_slope * 100.0, 10.0, 90.0)
 
             tto_score = 50.0
             if opp_pitcher_features and opp_pitcher_features.get("tto_endurance_score") is not None:

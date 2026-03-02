@@ -259,6 +259,61 @@ def _aggregate_bullpen(rows: list[dict[str, Any]]) -> dict[str, float | None]:
     }
 
 
+def _aggregate_high_lev_bullpen(rows: list[dict[str, Any]]) -> dict[str, float | None]:
+    """Aggregate bullpen stats for high-leverage relievers only.
+
+    High-leverage proxy: K% > 25%, or K% > 20% with BF in the top half of all
+    relievers (setup/closer proxy).  Returns NULLs when no relievers qualify.
+    """
+    _null: dict[str, float | None] = {
+        "bullpen_high_lev_era_14": None,
+        "bullpen_high_lev_k_pct_14": None,
+        "bullpen_high_lev_hr9_14": None,
+    }
+    if not rows:
+        return _null
+
+    # Compute median BF across all rows for the top-half criterion.
+    bf_values = sorted(_to_float(r.get("batters_faced")) or 0.0 for r in rows)
+    median_bf = bf_values[len(bf_values) // 2] if bf_values else 0.0
+
+    high_lev_rows = []
+    for row in rows:
+        k_pct = _to_float(row.get("k_pct"))
+        if k_pct is None:
+            continue
+        bf = _to_float(row.get("batters_faced")) or 0.0
+        if k_pct > 25.0 or (k_pct > 20.0 and bf >= median_bf):
+            high_lev_rows.append(row)
+
+    if not high_lev_rows:
+        return _null
+
+    weighted_hr9 = 0.0
+    weighted_k = 0.0
+    weight = 0.0
+    for row in high_lev_rows:
+        bf = _to_float(row.get("batters_faced")) or 1.0
+        hr9 = _to_float(row.get("hr_per_9"))
+        k_pct = _to_float(row.get("k_pct"))
+        weight += bf
+        if hr9 is not None:
+            weighted_hr9 += hr9 * bf
+        if k_pct is not None:
+            weighted_k += k_pct * bf
+
+    if weight <= 0:
+        return _null
+
+    hr9_avg = weighted_hr9 / weight if weighted_hr9 else None
+    k_avg = weighted_k / weight if weighted_k else None
+    return {
+        "bullpen_high_lev_era_14": hr9_avg,   # HR/9-based ERA proxy (consistent with all-bullpen proxy)
+        "bullpen_high_lev_k_pct_14": k_avg,
+        "bullpen_high_lev_hr9_14": hr9_avg,
+    }
+
+
 def _build_team_row(game_dt: date, team_id: str, opponent_team_id: str | None) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
 
@@ -275,6 +330,7 @@ def _build_team_row(game_dt: date, team_id: str, opponent_team_id: str | None) -
     if not bp14_rows:
         warnings.append("no_14d_pitcher_stats_for_bullpen_proxy")
     bp14 = _aggregate_bullpen(bp14_rows)
+    bp14_high_lev = _aggregate_high_lev_bullpen(bp14_rows)
 
     row = {
         "game_date": game_dt.strftime("%Y-%m-%d"),
@@ -304,6 +360,9 @@ def _build_team_row(game_dt: date, team_id: str, opponent_team_id: str | None) -
         "bullpen_whip_proxy_14": bp14["bullpen_whip_proxy_14"],
         "bullpen_k_pct_14": bp14["bullpen_k_pct_14"],
         "bullpen_hr9_14": bp14["bullpen_hr9_14"],
+        "bullpen_high_lev_era_14": bp14_high_lev["bullpen_high_lev_era_14"],
+        "bullpen_high_lev_k_pct_14": bp14_high_lev["bullpen_high_lev_k_pct_14"],
+        "bullpen_high_lev_hr9_14": bp14_high_lev["bullpen_high_lev_hr9_14"],
     }
     return row, warnings
 

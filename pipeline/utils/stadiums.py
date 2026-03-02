@@ -39,6 +39,40 @@ STADIUMS = [
 ]
 
 
+# Per-park HR multipliers by batter hand (lhb_factor, rhb_factor).
+# Values are relative to the generic hr_park_factor stored in STADIUMS.
+# Only parks with meaningful handedness asymmetry are listed; all others default to 1.0.
+HANDEDNESS_HR_FACTORS: dict[str, tuple[float, float]] = {
+    "NYY": (1.22, 0.93),   # short RF porch (314 ft) vs deep left-center
+    "BOS": (0.85, 1.08),   # Green Monster suppresses LHB HR
+    "SF":  (0.80, 0.90),   # deep RF 421 ft, marine air
+    "COL": (1.38, 1.38),   # elevation boost, symmetric
+    "CIN": (1.18, 1.15),   # small park, both sides
+    "BAL": (0.95, 1.10),   # deep LF favors RHB
+    "HOU": (0.90, 1.05),   # deep CF, favors pull hitters
+    "CHC": (1.10, 1.05),   # Wrigley wind baseline (out)
+    "TEX": (1.12, 1.08),   # Globe Life, warm air
+    "PHI": (1.05, 1.08),   # smaller dimensions
+}
+
+
+def get_handedness_hr_factor(team_abbr: str, bat_hand: str | None) -> float:
+    """Return the HR park-factor multiplier for a batter's hand at the given team's park.
+
+    Returns 1.0 for parks not in HANDEDNESS_HR_FACTORS (no asymmetry data).
+    For unknown hand (None or switch hitter) returns the average of LHB/RHB.
+    """
+    factors = HANDEDNESS_HR_FACTORS.get(team_abbr)
+    if not factors:
+        return 1.0
+    lhb, rhb = factors
+    if bat_hand == "L":
+        return lhb
+    if bat_hand == "R":
+        return rhb
+    return (lhb + rhb) / 2  # switch hitter or unknown hand
+
+
 def get_stadium_coords() -> dict:
     """Return dict mapping team_abbr → (latitude, longitude)."""
     return {s["team_abbr"]: (s["latitude"], s["longitude"]) for s in STADIUMS}

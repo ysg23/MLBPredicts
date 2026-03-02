@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from db.database import query
+from utils.stadiums import get_handedness_hr_factor
 from .base_engine import (
     GameContext,
     assign_signal,
@@ -155,15 +156,14 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
         (context or {}).get("lineups_confirmed_home") and (context or {}).get("lineups_confirmed_away")
     )
 
-    # Weather/park environment multiplier
+    # Weather/park environment multiplier (base — handedness adjustment applied per batter below)
     wind_mult = float(weather["wind_hr_impact"]) if weather and weather.get("wind_hr_impact") is not None else 1.0
     temp = float(weather["temperature_f"]) if weather and weather.get("temperature_f") is not None else None
     if temp is None:
         temp_mult = 1.0
     else:
         temp_mult = 0.95 + (max(0.0, min(40.0, temp - 50.0)) / 40.0) * 0.12
-    park_weather_mult = park_factor * wind_mult * temp_mult * weather_hr_mult
-    park_weather_score = _scale_between(park_weather_mult, 0.85, 1.20)
+    park_weather_mult_base = park_factor * wind_mult * temp_mult * weather_hr_mult
 
     # Pre-fetch all odds for optional enrichment
     all_odds = get_market_odds_rows(game_date=game.game_date, market=MARKET, game_id=game.game_id)
@@ -195,8 +195,9 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
         iso_7 = _to_float(batter.get("iso_7"))
         iso_30 = _to_float(batter.get("iso_30"))
         hr_rate_14 = _to_float(batter.get("hr_rate_14"))
+        bat_hand = batter.get("bat_hand")
 
-        # Platoon ISO split
+        # Platoon ISO split — use only the split matching the opposing pitcher's hand
         iso_split = None
         if opp_hand == "L":
             iso_split = _to_float(batter.get("iso_vs_lhp"))
@@ -205,6 +206,10 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
 
         if barrel_14 is None and iso_14 is None and hr_rate_14 is None:
             continue
+
+        # Per-batter park/weather score: apply handedness HR factor to base multiplier
+        hand_factor = get_handedness_hr_factor(game.home_team, bat_hand)
+        park_weather_score = _scale_between(park_weather_mult_base * hand_factor, 0.85, 1.20)
 
         # --- Factor scores ---
         # Barrel quality
@@ -223,9 +228,12 @@ def score_game(game: GameContext, weather: dict | None, park_factor: float, seas
             + 0.4 * _scale_between(pitcher_barrel_allow, 5.0, 14.0)
         )
 
-        # Hot/cold: 7-day ISO vs 30-day ISO
+        # Hot/cold: normalized relative slope — avoids penalizing high-baseline hitters
+        # (a 0.020 drop from ISO 0.280 is less alarming than from ISO 0.140)
         hot_cold_delta = _to_float(batter.get("hot_cold_delta_iso"))
-        hot_cold_score = _scale_between(hot_cold_delta, -0.08, 0.08)
+        _iso30_base = iso_30 if iso_30 is not None else 0.160
+        _relative_slope = (hot_cold_delta or 0.0) / max(_iso30_base, 0.05)
+        hot_cold_score = _clamp(50.0 + _relative_slope * 100.0, 10.0, 90.0)
 
         # Lineup order
         order_scores = {1: 72, 2: 78, 3: 85, 4: 82, 5: 70, 6: 58, 7: 45, 8: 35, 9: 28}

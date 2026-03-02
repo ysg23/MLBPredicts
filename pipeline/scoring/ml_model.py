@@ -103,7 +103,9 @@ def _offense_strength(team: dict[str, Any] | None) -> float:
 def _bullpen_strength(team: dict[str, Any] | None) -> float:
     if not team:
         return 0.0
-    era = _to_float(team.get("bullpen_era_proxy_14")) or 4.2
+    era_proxy = _to_float(team.get("bullpen_era_proxy_14")) or 4.2
+    high_lev_era = _to_float(team.get("bullpen_high_lev_era_14"))
+    era = (0.6 * high_lev_era + 0.4 * era_proxy) if high_lev_era is not None else era_proxy
     whip = _to_float(team.get("bullpen_whip_proxy_14")) or 1.30
     k = _to_float(team.get("bullpen_k_pct_14")) or 22.0
     hr9 = _to_float(team.get("bullpen_hr9_14")) or 1.1

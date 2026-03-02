@@ -136,7 +136,8 @@ def _project_ks(
     weather_adj = 0.0
     if weather_temp is not None:
         # cooler games slightly improve strikeout environment.
-        weather_adj = (68.0 - weather_temp) * 0.015
+        # Scale: 0.00015/°F → ≈ +0.003 at 50°F, ≈ −0.002 at 82°F (small perturbation)
+        weather_adj = (68.0 - weather_temp) * 0.00015
 
     # Day games historically have slightly lower K rates (better visibility)
     day_night_adj = 0.0
@@ -148,8 +149,8 @@ def _project_ks(
     # TTO adjustment: pitchers with high K decay lose effectiveness deeper into games
     tto_adj = 0.0
     if tto_k_decay is not None:
-        # League avg is 18% decay. Better than avg = positive K projection adj
-        tto_adj = (18.0 - tto_k_decay) * 0.001  # low decay = more Ks sustained
+        # Actual league avg ~35% decay. Better than avg = positive K projection adj.
+        tto_adj = (35.0 - tto_k_decay) * 0.001  # low decay = more Ks sustained
 
     # Expected batters faced proxy. If missing, use a neutral starter volume.
     expected_bf = (bf14 / 3.0) if bf14 is not None else 24.0
@@ -157,10 +158,12 @@ def _project_ks(
     expected_role = role if role is not None else 0.55
     expected_bf *= (0.8 + 0.4 * expected_role)
 
-    k_rate = (k_pct_14 / 100.0) if k_pct_14 is not None else 0.22
+    # k_pct_14, whiff_pct_14, chase_pct_14 are stored as decimal fractions (0.22 = 22%)
+    # offense_k_pct_14 is stored as a percentage (22.0 = 22%), so opp_adj divides by 100.
+    k_rate = k_pct_14 if k_pct_14 is not None else 0.22
     opp_adj = ((opp_k_14 - 22.0) / 100.0) if opp_k_14 is not None else 0.0
-    chase_adj = ((chase_14 - 30.0) / 100.0) if chase_14 is not None else 0.0
-    whiff_adj = ((whiff_14 - 24.0) / 100.0) if whiff_14 is not None else 0.0
+    chase_adj = (chase_14 - 0.28) if chase_14 is not None else 0.0
+    whiff_adj = (whiff_14 - 0.22) if whiff_14 is not None else 0.0
     ump_adj = ump_boost / 100.0
 
     effective_k_rate = max(0.12, min(0.45, k_rate + (0.35 * opp_adj) + (0.2 * whiff_adj) + (0.1 * chase_adj) + ump_adj + weather_adj + day_night_adj + tto_adj))
@@ -178,10 +181,15 @@ def _project_ks(
     elif is_day_game == 1:
         day_night_score = 42.0  # slight K suppression for day games
 
+    # k_pct_14/whiff_pct_14/chase_pct_14 are decimal — scale to % for factor scoring.
+    # offense_k_pct_14 (opp_k_14) is already in % — no conversion needed.
+    _k_pct = (k_pct_14 * 100.0) if k_pct_14 is not None else 22.0
+    _whiff_pct = (whiff_14 * 100.0) if whiff_14 is not None else 22.0
+    _chase_pct = (chase_14 * 100.0) if chase_14 is not None else 28.0
     factors = {
-        "k_form_score": 50.0 + ((k_pct_14 or 22.0) - 22.0) * 3.0,
+        "k_form_score": 50.0 + (_k_pct - 22.0) * 3.0,
         "opponent_k_score": 50.0 + ((opp_k_14 or 22.0) - 22.0) * 3.0,
-        "whiff_chase_score": 50.0 + (((whiff_14 or 24.0) - 24.0) * 2.0) + (((chase_14 or 30.0) - 30.0) * 1.3),
+        "whiff_chase_score": 50.0 + ((_whiff_pct - 22.0) * 2.0) + ((_chase_pct - 28.0) * 1.3),
         "role_score": (expected_role * 100.0),
         "context_score": 50.0 + (ump_boost * 2.0) + (weather_adj * 50.0),
         "tto_endurance_score": tto_score,
